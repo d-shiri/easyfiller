@@ -1,5 +1,10 @@
 # EasyFiller (Anki add-on)
 
+[▶ Watch the demo](assets/demo.webm)
+
+<!-- For an inline player on GitHub, replace the link above with a
+     github.com/user-attachments/... URL (see the README note in the repo). -->
+
 One keypress turns a bare word into a complete flashcard — meaning, example
 sentences, translations, and pronunciation — using the local **Claude** CLI and
 the free **edge-tts** voices. Ships configured for German, but works for **any
