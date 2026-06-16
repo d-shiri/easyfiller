@@ -1,0 +1,20 @@
+{
+  "source_field": "Back",
+  "meaning_field": "Front",
+  "example_fields": ["German_example", "German_example_2"],
+  "translation_fields": ["English_translation", "English_translation_2"],
+  "tts_fields": ["Back", "German_example", "German_example_2"],
+  "normalize_word": true,
+  "claude_path": "claude",
+  "claude_timeout": 120,
+  "claude_model": "",
+  "claude_prompt": "",
+  "edge_tts_path": "edge-tts",
+  "tts_voice": "de-DE-AmalaNeural",
+  "tts_speed": 1.25,
+  "tts_pitch": 0,
+  "tts_timeout": 60,
+  "shortcut_generate": "Ctrl+Shift+G",
+  "shortcut_pronounce": "Ctrl+Shift+P",
+  "shortcut_both": "Ctrl+Shift+B"
+}
