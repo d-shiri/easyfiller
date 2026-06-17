@@ -9,6 +9,8 @@ Two one-press helpers for the card editor:
   (via the **edge-tts** CLI — free Microsoft Neural voices) to the configured
   `tts_fields`. Fields that already contain a `[sound:...]` tag are skipped.
 - **Both** (button `✨🔊 DE`, default `Ctrl+Shift+B`): generate, then pronounce.
+- **Clear** (button `🗑`, default `Ctrl+Shift+X`): empties every field on the note so
+  you can enter a different word. Reversible with the editor's undo (`Ctrl+Z`).
 
 The `DE` tag on the buttons is derived from `tts_voice` (or set `button_label`).
 

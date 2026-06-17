@@ -1,6 +1,6 @@
 """EasyFiller: fill meaning + examples with Claude, add edge-tts pronunciation.
 
-Adds two editor buttons and three shortcuts (generate / pronounce / both).
+Adds four editor buttons and four shortcuts (generate / pronounce / both / clear).
 """
 
 from aqt import gui_hooks, mw
@@ -266,6 +266,25 @@ def on_pronounce(editor):
     editor.call_after_note_saved(lambda: tts_module.pronounce(editor, get_config()))
 
 
+def on_clear(editor):
+    """Empty every field on the current note so you can start a new word.
+
+    Anki's own undo (Ctrl+Z in the editor) reverses this, so we clear without a
+    confirmation prompt to keep the button a single press.
+    """
+    note = editor.note
+    if note is None:
+        return
+    if not any(strip_html(f) for f in note.fields):
+        tooltip("Fields are already empty.")
+        return
+    for i in range(len(note.fields)):
+        note.fields[i] = ""
+    editor.set_note(note)
+    editor.web.setFocus()
+    tooltip("Cleared all fields.")
+
+
 def on_both(editor):
     editor.call_after_note_saved(
         lambda: _generate_async(
@@ -324,6 +343,16 @@ def _add_buttons(buttons, editor):
             label="✨\U0001F50A %s" % lang,
         )
     )
+    buttons.append(
+        editor.addButton(
+            None,
+            "de_clear",
+            lambda ed: on_clear(ed),
+            tip="Clear all fields — %s"
+            % config.get("shortcut_clear", "Ctrl+Shift+X"),
+            label="\U0001F5D1 ",
+        )
+    )
     return buttons
 
 
@@ -337,6 +366,9 @@ def _add_shortcuts(shortcuts, editor):
     )
     shortcuts.append(
         (config.get("shortcut_both", "Ctrl+Shift+B"), lambda: on_both(editor), True)
+    )
+    shortcuts.append(
+        (config.get("shortcut_clear", "Ctrl+Shift+X"), lambda: on_clear(editor), True)
     )
 
 
