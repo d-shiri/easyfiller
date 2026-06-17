@@ -4,7 +4,7 @@ Adds two editor buttons and three shortcuts (generate / pronounce / both).
 """
 
 from aqt import gui_hooks, mw
-from aqt.utils import showWarning, tooltip
+from aqt.utils import tooltip
 
 from . import claude_client
 from . import dialogs
@@ -83,7 +83,11 @@ def _generate_async(editor, then=None):
     source = config.get("source_field", "Back")
     sidx = field_index(note, source)
     if sidx is None:
-        showWarning("Source field '%s' not found on this note type." % source)
+        dialogs.show_error(
+            editor.parentWindow,
+            "Source field '%s' not found on this note type." % source,
+            title="Can't generate",
+        )
         return
     word = strip_html(note.fields[sidx])
 
@@ -111,8 +115,10 @@ def _generate_async(editor, then=None):
                 to_translate[i] = existing
 
     if not word and not to_translate:
-        showWarning(
-            "The '%s' field is empty -- type the German word first." % source
+        dialogs.show_error(
+            editor.parentWindow,
+            "The '%s' field is empty -- type the word first." % source,
+            title="Nothing to generate",
         )
         return
 
@@ -169,7 +175,10 @@ def _generate_async(editor, then=None):
             data, translations = future.result()
         except Exception as exc:
             overlay.hide(editor)
-            showWarning("Claude failed: %s" % exc)
+            dialogs.show_error(
+                editor.parentWindow, "Claude failed: %s" % exc,
+                title="Generation failed",
+            )
             return
         if not _lemma_dup_ok(editor, data, word, precheck_nids, config):
             overlay.hide(editor)
@@ -268,14 +277,31 @@ def on_both(editor):
 # --------------------------------------------------------------------------- #
 # Hooks                                                                        #
 # --------------------------------------------------------------------------- #
+def _lang_label(config):
+    """Short tag shown on the editor buttons (e.g. "DE").
+
+    Uses `button_label` if set, otherwise derives it from the language code in
+    `tts_voice` ("de-DE-AmalaNeural" -> "DE", "fr-FR-DeniseNeural" -> "FR") so
+    the buttons aren't hard-coded to German.
+    """
+    label = (config.get("button_label") or "").strip()
+    if label:
+        return label
+    code = (config.get("tts_voice", "") or "").split("-", 1)[0]
+    return code.upper() if code else "DE"
+
+
 def _add_buttons(buttons, editor):
+    config = get_config()
+    lang = _lang_label(config)
     buttons.append(
         editor.addButton(
             None,
             "de_generate",
             lambda ed: on_generate(ed),
-            tip="Generate meaning + examples from the German word (Claude)",
-            label="\U0001F150 DE",
+            tip="Generate meaning + examples (Claude) — %s"
+            % config.get("shortcut_generate", "Ctrl+Shift+G"),
+            label="✨ %s" % lang,
         )
     )
     buttons.append(
@@ -283,8 +309,19 @@ def _add_buttons(buttons, editor):
             None,
             "de_pronounce",
             lambda ed: on_pronounce(ed),
-            tip="Add pronunciation to German fields (edge-tts)",
-            label="\U0001F50A DE",
+            tip="Add pronunciation (edge-tts) — %s"
+            % config.get("shortcut_pronounce", "Ctrl+Shift+P"),
+            label="\U0001F50A %s" % lang,
+        )
+    )
+    buttons.append(
+        editor.addButton(
+            None,
+            "de_both",
+            lambda ed: on_both(ed),
+            tip="Generate, then pronounce — %s"
+            % config.get("shortcut_both", "Ctrl+Shift+B"),
+            label="✨\U0001F50A %s" % lang,
         )
     )
     return buttons

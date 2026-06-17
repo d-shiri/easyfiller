@@ -20,8 +20,9 @@ import subprocess
 import tempfile
 
 from aqt import mw
-from aqt.utils import showWarning, tooltip
+from aqt.utils import tooltip
 
+from . import dialogs
 from . import overlay
 from .util import field_index, has_audio, strip_html
 
@@ -188,7 +189,10 @@ def pronounce(editor, config):
         except Exception as exc:
             overlay.set_step(editor, "tts", state="error")
             overlay.hide(editor)
-            showWarning("TTS failed: %s" % exc)
+            dialogs.show_error(
+                editor.parentWindow, "TTS failed: %s" % exc,
+                title="Pronunciation failed",
+            )
             return
         note = editor.note
         for idx, path in results:
