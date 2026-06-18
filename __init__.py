@@ -3,6 +3,8 @@
 Adds four editor buttons and four shortcuts (generate / pronounce / both / clear).
 """
 
+import os
+
 from aqt import gui_hooks, mw
 from aqt.utils import tooltip
 
@@ -296,61 +298,50 @@ def on_both(editor):
 # --------------------------------------------------------------------------- #
 # Hooks                                                                        #
 # --------------------------------------------------------------------------- #
-def _lang_label(config):
-    """Short tag shown on the editor buttons (e.g. "DE").
+_ICON_DIR = os.path.join(os.path.dirname(__file__), "assets", "icons")
 
-    Uses `button_label` if set, otherwise derives it from the language code in
-    `tts_voice` ("de-DE-AmalaNeural" -> "DE", "fr-FR-DeniseNeural" -> "FR") so
-    the buttons aren't hard-coded to German.
-    """
-    label = (config.get("button_label") or "").strip()
-    if label:
-        return label
-    code = (config.get("tts_voice", "") or "").split("-", 1)[0]
-    return code.upper() if code else "DE"
+
+def _icon(name):
+    """Absolute path to an editor-button icon (Anki inlines it as a data URI)."""
+    return os.path.join(_ICON_DIR, name + ".png")
 
 
 def _add_buttons(buttons, editor):
     config = get_config()
-    lang = _lang_label(config)
     buttons.append(
         editor.addButton(
-            None,
+            _icon("generate"),
             "de_generate",
             lambda ed: on_generate(ed),
             tip="Generate meaning + examples (Claude) — %s"
             % config.get("shortcut_generate", "Ctrl+Shift+G"),
-            label="✨ %s" % lang,
         )
     )
     buttons.append(
         editor.addButton(
-            None,
+            _icon("pronounce"),
             "de_pronounce",
             lambda ed: on_pronounce(ed),
             tip="Add pronunciation (edge-tts) — %s"
             % config.get("shortcut_pronounce", "Ctrl+Shift+P"),
-            label="\U0001F50A %s" % lang,
         )
     )
     buttons.append(
         editor.addButton(
-            None,
+            _icon("both"),
             "de_both",
             lambda ed: on_both(ed),
             tip="Generate, then pronounce — %s"
             % config.get("shortcut_both", "Ctrl+Shift+B"),
-            label="✨\U0001F50A %s" % lang,
         )
     )
     buttons.append(
         editor.addButton(
-            None,
+            _icon("clear"),
             "de_clear",
             lambda ed: on_clear(ed),
             tip="Clear all fields — %s"
             % config.get("shortcut_clear", "Ctrl+Shift+X"),
-            label="\U0001F5D1 ",
         )
     )
     return buttons

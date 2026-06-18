@@ -2,17 +2,15 @@
 
 Two one-press helpers for the card editor:
 
-- **Generate** (button `✨ DE`, default `Ctrl+Shift+G`): reads the German word from
+- **Generate** (document icon, default `Ctrl+Shift+G`): reads the German word from
   `source_field` and uses the local **Claude** CLI to fill the English meaning plus two
   example sentences and their translations. Only *empty* fields are filled.
-- **Pronounce** (button `🔊 DE`, default `Ctrl+Shift+P`): silently adds TTS audio
+- **Pronounce** (microphone icon, default `Ctrl+Shift+P`): silently adds TTS audio
   (via the **edge-tts** CLI — free Microsoft Neural voices) to the configured
   `tts_fields`. Fields that already contain a `[sound:...]` tag are skipped.
-- **Both** (button `✨🔊 DE`, default `Ctrl+Shift+B`): generate, then pronounce.
-- **Clear** (button `🗑`, default `Ctrl+Shift+X`): empties every field on the note so
+- **Both** (document + microphone icon, default `Ctrl+Shift+B`): generate, then pronounce.
+- **Clear** (trash icon, default `Ctrl+Shift+X`): empties every field on the note so
   you can enter a different word. Reversible with the editor's undo (`Ctrl+Z`).
-
-The `DE` tag on the buttons is derived from `tts_voice` (or set `button_label`).
 
 ## Settings
 
@@ -26,8 +24,6 @@ The `DE` tag on the buttons is derived from `tts_voice` (or set `button_label`).
   (`studiert` → `studieren`), and at least one example still uses the form you typed.
   Set `false` to leave the field exactly as entered. Note: a custom `claude_prompt`
   must include the `canonical` field for this to take effect.
-- `button_label` – short tag shown on the editor buttons. Empty (default) derives it
-  from `tts_voice` (`de-DE-…` → `DE`, `fr-FR-…` → `FR`); set e.g. `"DE"` to override.
 - `claude_path` – path to the `claude` CLI. Leave as `"claude"` to auto-resolve, or set
   an absolute path (e.g. `/home/you/.local/bin/claude`) if Anki can't find it.
 - `claude_timeout` – seconds to wait for Claude.

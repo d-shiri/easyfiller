@@ -5,7 +5,6 @@
   "translation_fields": ["English_translation", "English_translation_2"],
   "tts_fields": ["Back", "German_example", "German_example_2"],
   "normalize_word": true,
-  "button_label": "",
   "claude_path": "claude",
   "claude_timeout": 120,
   "claude_model": "",
