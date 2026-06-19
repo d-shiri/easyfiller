@@ -39,6 +39,23 @@ min-width:215px;}
 .ga-step{display:flex;align-items:center;gap:10px;font-size:13px;font-weight:500;
 letter-spacing:.2px;color:#1d1d1f;
 font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}
+.ga-caption{font-size:11px;font-weight:500;letter-spacing:.3px;color:#86868b;
+text-align:center;align-self:center;
+font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}
+.ga-caption:empty{display:none;}
+.ga-bar{display:none;align-self:stretch;height:6px;border-radius:3px;
+background:rgba(120,120,128,.22);overflow:hidden;}
+.ga-bar-fill{height:100%;width:0;border-radius:3px;background:#269af2;
+transition:width .2s ease;}
+/* Unknown total (manifest/verify): a sliver sweeps left-to-right instead. */
+.ga-bar.ga-indet .ga-bar-fill{width:35%;animation:ga-slide 1.1s ease-in-out infinite;
+transition:none;}
+@keyframes ga-slide{0%{margin-left:-35%}100%{margin-left:100%}}
+.ga-cancel{display:none;border:none;background:transparent;cursor:pointer;
+font-size:12px;font-weight:600;letter-spacing:.2px;color:#86868b;
+padding:7px 16px;border-radius:8px;
+font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}
+.ga-cancel:hover{background:rgba(120,120,128,.16);color:#1d1d1f;}
 .ga-step .ga-ic{width:16px;height:16px;flex:0 0 auto;box-sizing:border-box;
 border-radius:50%;position:relative;}
 .ga-pending{opacity:.45;}
@@ -56,6 +73,8 @@ font-size:12px;font-weight:800;line-height:16px;text-align:center;}
 @media (prefers-color-scheme:dark){
 .ga-card{background:rgba(44,44,48,.94);}
 .ga-step{color:#f5f5f7;}
+.ga-caption{color:#9a9a9f;}
+.ga-cancel:hover{color:#f5f5f7;}
 }
 """
 
@@ -71,8 +90,13 @@ _SHOW_JS = """
   o.id = 'ga-overlay';
   o.innerHTML = '<div class="ga-card"><div class="ga-stage">'
     + '<div class="ga-spinner"></div></div>'
-    + '<div class="ga-steps"></div></div>';
+    + '<div class="ga-steps"></div>'
+    + '<div class="ga-bar"><div class="ga-bar-fill"></div></div>'
+    + '<div class="ga-caption"></div>'
+    + '<button id="ga-cancel" class="ga-cancel">Cancel</button></div>';
   document.body.appendChild(o);
+  var cancel = o.querySelector('#ga-cancel');
+  if(cancel){ cancel.addEventListener('click', function(){ pycmd('ga_cancel'); }); }
 })();
 """
 
@@ -96,6 +120,43 @@ _RENDER_JS = """
 })();
 """
 
+# Set the caption text (model info) under the steps; textContent keeps it inert.
+_CAPTION_JS = """
+(function(){
+  var o = document.getElementById('ga-overlay');
+  if(!o) return;
+  var c = o.querySelector('.ga-caption');
+  if(c){ c.textContent = %s; }
+})();
+"""
+
+# Drive the progress bar: null hides it, -1 is indeterminate (sweeping sliver),
+# 0..100 sets a determinate fill width.
+_PROGRESS_JS = """
+(function(){
+  var o = document.getElementById('ga-overlay');
+  if(!o) return;
+  var bar = o.querySelector('.ga-bar');
+  if(!bar) return;
+  var p = %s;
+  if(p === null){ bar.style.display='none'; return; }
+  bar.style.display='block';
+  var fill = bar.querySelector('.ga-bar-fill');
+  if(p < 0){ bar.classList.add('ga-indet'); fill.style.width=''; }
+  else { bar.classList.remove('ga-indet'); fill.style.width = p + '%%'; }
+})();
+"""
+
+# Show/hide the Cancel button.
+_CANCEL_JS = """
+(function(){
+  var o = document.getElementById('ga-overlay');
+  if(!o) return;
+  var b = o.querySelector('#ga-cancel');
+  if(b){ b.style.display = %s ? 'block' : 'none'; }
+})();
+"""
+
 _HIDE_JS = """
 (function(){
   var o = document.getElementById('ga-overlay');
@@ -110,8 +171,25 @@ _HIDE_JS = """
 })();
 """
 
+class CancelToken:
+    """Shared flag a running job polls to know the user asked to stop.
+
+    The job worker/callbacks check `cancelled` at safe points (between steps,
+    before applying results) and bail without touching the note. Created per run
+    by start(cancelable=True)."""
+
+    __slots__ = ("cancelled",)
+
+    def __init__(self):
+        self.cancelled = False
+
+
 # Current step list: [[key, label, state], ...]. One operation runs at a time.
 _steps = []
+_caption = ""
+_progress = None  # None hidden, -1 indeterminate, 0..100 percent
+_cancelable = False
+_token = None
 _shown = False
 
 
@@ -174,24 +252,59 @@ def _render(editor):
     if web:
         payload = [{"label": s[1], "state": s[2]} for s in _steps]
         web.eval(_RENDER_JS % json.dumps(payload))
+        web.eval(_CAPTION_JS % json.dumps(_caption))
+        web.eval(_PROGRESS_JS % json.dumps(_progress))
+        web.eval(_CANCEL_JS % json.dumps(_cancelable))
 
 
 def is_shown():
     return _shown
 
 
-def start(editor, steps):
+def start(editor, steps, caption=None, cancelable=False):
     """Show the overlay with an initial checklist.
 
     `steps` is a list of (key, label) or (key, label, state); state defaults to
-    "pending". `key` identifies the step for later set_step() updates.
+    "pending". `key` identifies the step for later set_step() updates. `caption`
+    is an optional dim line under the steps (e.g. the model doing the work).
+    `cancelable` shows a Cancel button and returns a fresh CancelToken the caller
+    polls; otherwise returns None.
     """
-    global _steps
+    global _steps, _caption, _progress, _cancelable, _token
     _steps = [
         [s[0], s[1], s[2] if len(s) > 2 else "pending"] for s in steps
     ]
+    _caption = caption or ""
+    _progress = None
+    _cancelable = cancelable
+    _token = CancelToken() if cancelable else None
     if _ensure(editor):
         _render(editor)
+    return _token
+
+
+def current_token():
+    """The active run's CancelToken (or None) -- so a follow-on phase like
+    pronounce, started on the same overlay, can poll the same cancellation."""
+    return _token
+
+
+def request_cancel():
+    """Mark the active run cancelled (called from the Cancel button bridge)."""
+    if _token is not None:
+        _token.cancelled = True
+
+
+def set_progress(editor, value):
+    """Show/update the progress bar under the steps.
+
+    `value` is None (hide), -1 (indeterminate sweep, for stages with no known
+    total), or a 0..100 percentage for a determinate fill."""
+    global _progress
+    _progress = value
+    web = _web(editor)
+    if web:
+        web.eval(_PROGRESS_JS % json.dumps(_progress))
 
 
 def set_step(editor, key, label=None, state=None):
@@ -215,9 +328,12 @@ def set_step(editor, key, label=None, state=None):
 
 
 def hide(editor):
-    global _steps, _shown
+    global _steps, _caption, _progress, _cancelable, _shown
     _restore_anki_progress()
     _steps = []
+    _caption = ""
+    _progress = None
+    _cancelable = False
     _shown = False
     web = _web(editor)
     if web:

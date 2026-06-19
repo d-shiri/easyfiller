@@ -8,7 +8,7 @@ import os
 from aqt import gui_hooks, mw
 from aqt.utils import tooltip
 
-from . import claude_client
+from . import llm_client
 from . import dialogs
 from . import overlay
 from . import tts as tts_module
@@ -51,6 +51,36 @@ def _open_in_browser(nids):
     browser.raise_()
 
 
+def _clean_canonical(canonical, typed_word):
+    """Return `canonical` only if it plausibly is the citation form of `typed_word`.
+
+    Weak local models sometimes return a grammar note ("n. with def. art.",
+    "noun, adjective") instead of the lemma. Writing that into the source field
+    would destroy the user's word, so we reject anything that is too long to be a
+    citation form or shares no stem with what was typed -- callers then leave the
+    field as-is. Returns "" when the canonical can't be trusted.
+    """
+    canonical = (canonical or "").strip()
+    if not canonical or len(canonical.split()) > 3:
+        return ""  # more than article + word(s): almost certainly a description
+    typed = (typed_word or "").strip().lower()
+    if not typed:
+        return canonical
+    for tok in canonical.lower().split():
+        if tok in ("der", "die", "das"):
+            continue  # ignore the article we may have added
+        if typed in tok or tok in typed:
+            return canonical
+        shared = 0
+        for a, b in zip(typed, tok):
+            if a != b:
+                break
+            shared += 1
+        if shared >= 4:  # shared stem handles inflections (studiert -> studieren)
+            return canonical
+    return ""
+
+
 def _lemma_dup_ok(editor, data, typed_word, precheck_nids, config):
     """Re-check duplicates against the canonical lemma after generation.
 
@@ -61,7 +91,7 @@ def _lemma_dup_ok(editor, data, typed_word, precheck_nids, config):
     """
     if not config.get("normalize_word", True):
         return True
-    canonical = (data or {}).get("canonical", "").strip()
+    canonical = _clean_canonical((data or {}).get("canonical", ""), typed_word)
     if not canonical or canonical.lower() == (typed_word or "").lower():
         return True
     nids, decks = _find_duplicates(canonical, editor.note, config)
@@ -79,6 +109,57 @@ def _lemma_dup_ok(editor, data, typed_word, precheck_nids, config):
 # --------------------------------------------------------------------------- #
 # Generate (Claude)                                                           #
 # --------------------------------------------------------------------------- #
+def _download_model(editor, model, on_ready):
+    """Pull an Ollama model in the background, showing a progress bar.
+
+    On success runs `on_ready()` (which retries generation); on failure shows the
+    error dialog. The pull streams byte progress, so the bar is determinate during
+    the blob downloads and indeterminate (sweeping) during manifest/verify stages.
+    """
+    config = get_config()
+    overlay.start(
+        editor,
+        [("pull", "Downloading %s" % model, "active")],
+        caption=llm_client.active_model(config),
+    )
+    overlay.set_progress(editor, -1)
+
+    def on_main(fn):
+        mw.taskman.run_on_main(fn)
+
+    def report(completed, total, status):
+        if total and completed is not None:
+            pct = max(0, min(100, int(completed * 100 / total)))
+            label = "Downloading %s — %d%%" % (model, pct)
+            on_main(lambda: (overlay.set_progress(editor, pct),
+                             overlay.set_step(editor, "pull", label=label)))
+        else:
+            label = (status or "Downloading %s" % model).capitalize()
+            on_main(lambda: (overlay.set_progress(editor, -1),
+                             overlay.set_step(editor, "pull", label=label)))
+
+    def work():
+        llm_client.pull_model(model, config, on_progress=report)
+
+    def on_done(future):
+        try:
+            future.result()
+        except Exception as exc:
+            overlay.hide(editor)
+            dialogs.show_error(editor.parentWindow, "%s" % exc, title="Download failed")
+            return
+        # Make the just-downloaded model the active one, so the retry (and future
+        # generations) use it even when it differs from what was configured.
+        cfg = get_config()
+        cfg["ollama_model"] = model
+        mw.addonManager.writeConfig(__name__, cfg)
+        overlay.set_progress(editor, None)
+        overlay.set_step(editor, "pull", label="Downloaded %s" % model, state="done")
+        on_ready()
+
+    mw.taskman.run_in_background(work, on_done)
+
+
 def _generate_async(editor, then=None):
     config = get_config()
     note = editor.note
@@ -152,35 +233,58 @@ def _generate_async(editor, then=None):
         steps.append(("translate", label, "active" if not word else "pending"))
     if then is not None:  # the "both" flow will run pronunciation after this
         steps.append(("tts", "Adding pronunciation", "pending"))
-    overlay.start(editor, steps)
+    token = overlay.start(
+        editor, steps, caption=llm_client.active_model(config), cancelable=True
+    )
 
     def on_main(fn):
         mw.taskman.run_on_main(fn)
 
     def work():
         data = None
+        if token.cancelled:
+            return None, {}
         if word:
-            data = claude_client.generate(word, config, avoid=avoid)
+            data = llm_client.generate(word, config, avoid=avoid)
             on_main(lambda: overlay.set_step(editor, "gen", state="done"))
             if sentences:
                 on_main(lambda: overlay.set_step(editor, "translate", state="active"))
+        if token.cancelled:
+            return None, {}
         translations = {}
         if sentences:
-            translations = dict(zip(keys, claude_client.translate(sentences, config)))
+            translations = dict(zip(keys, llm_client.translate(sentences, config)))
             on_main(lambda: overlay.set_step(editor, "translate", state="done"))
         return data, translations
 
     # Use taskman (not QueryOp) so Anki doesn't pop its own "Processing…" dialog
     # on top of our overlay -- our overlay is the only progress indicator.
     def on_done(future):
+        if token.cancelled:
+            return  # user cancelled; the Cancel handler already hid the overlay
         try:
             data, translations = future.result()
         except Exception as exc:
             overlay.hide(editor)
-            dialogs.show_error(
-                editor.parentWindow, "Claude failed: %s" % exc,
-                title="Generation failed",
+            pull = getattr(exc, "pull", None)
+            # Offer the recommended models too (minus the one already configured),
+            # so the user can grab a good model without knowing its name.
+            recommend = (
+                [(m, n) for m, n in llm_client.RECOMMENDED_MODELS if m != pull]
+                if pull else None
             )
+            chosen = dialogs.show_error(
+                editor.parentWindow, "%s" % exc,
+                title="Generation failed",
+                hint=getattr(exc, "hint", None),
+                models=getattr(exc, "models", None),
+                download=pull,
+                recommend=recommend,
+            )
+            if chosen:
+                # Pull the model with a progress bar, then retry the whole flow
+                # (re-reading the note) so the just-downloaded model is used.
+                _download_model(editor, chosen, lambda: _generate_async(editor, then))
             return
         if not _lemma_dup_ok(editor, data, word, precheck_nids, config):
             overlay.hide(editor)
@@ -205,13 +309,16 @@ def _apply_generated(editor, data, translations, config):
         # "herausforderung" -> "die Herausforderung", "studiert" -> "studieren").
         # This is the one field we intentionally OVERWRITE; any existing
         # [sound:...] tag on it is preserved.
-        canonical = data.get("canonical", "").strip()
-        if config.get("normalize_word", True) and canonical:
+        if config.get("normalize_word", True):
             sidx = field_index(note, config.get("source_field", "Back"))
-            if sidx is not None and canonical != strip_html(note.fields[sidx]):
-                tag = audio_tag(note.fields[sidx])
-                note.fields[sidx] = canonical + (" " + tag if tag else "")
-                changed = True
+            if sidx is not None:
+                typed = strip_html(note.fields[sidx])
+                # Guard against garbage lemmas so we never clobber the typed word.
+                canonical = _clean_canonical(data.get("canonical", ""), typed)
+                if canonical and canonical != typed:
+                    tag = audio_tag(note.fields[sidx])
+                    note.fields[sidx] = canonical + (" " + tag if tag else "")
+                    changed = True
 
         # English meaning/gloss of the word: fill only if empty.
         midx = field_index(note, config.get("meaning_field", "Front"))
@@ -363,5 +470,23 @@ def _add_shortcuts(shortcuts, editor):
     )
 
 
+def _on_js_message(handled, message, context):
+    """Catch the overlay Cancel button's `pycmd('ga_cancel')`.
+
+    The editor webview routes pycmd through this global hook with `context` set
+    to the Editor; we flag the active run cancelled and tear down the overlay.
+    The in-flight CLI/HTTP call finishes in the background but its result is then
+    discarded (the job handlers poll the token before applying anything)."""
+    from aqt.editor import Editor
+
+    if message == "ga_cancel" and isinstance(context, Editor):
+        overlay.request_cancel()
+        overlay.hide(context)
+        tooltip("Cancelled.")
+        return (True, None)
+    return handled
+
+
 gui_hooks.editor_did_init_buttons.append(_add_buttons)
 gui_hooks.editor_did_init_shortcuts.append(_add_shortcuts)
+gui_hooks.webview_did_receive_js_message.append(_on_js_message)

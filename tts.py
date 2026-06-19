@@ -2,7 +2,7 @@
 
 edge-tts uses Microsoft's free online Neural voices (the same voices Azure TTS
 exposes, e.g. de-DE-AmalaNeural) with no API key and no AwesomeTTS dependency.
-We call the CLI directly -- exactly like claude_client.py calls `claude` --
+We call the CLI directly -- exactly like llm_client.py calls its LLM CLI --
 because Anki's bundled Python can't import the package. The CLI's own shebang
 points at a Python that has edge_tts installed, so an absolute path works even
 under Anki's stripped environment.
@@ -27,6 +27,28 @@ from . import overlay
 from .util import field_index, has_audio, strip_html
 
 DEFAULT_VOICE = "de-DE-AmalaNeural"
+
+
+class TTSError(RuntimeError):
+    """An edge-tts failure whose full CLI output is kept aside for a details pane.
+
+    str(exc) is a one-line headline (the actual error); `.details` holds the raw
+    stderr/traceback so show_error can tuck it behind a collapsible section
+    instead of stretching the dialog off-screen."""
+
+    def __init__(self, summary, details=None):
+        super().__init__(summary)
+        self.details = details
+
+
+def _short_reason(output):
+    """The single most useful line from a CLI error blob (often a traceback).
+
+    edge-tts dumps a whole Python traceback on network errors; its last non-empty
+    line is the real exception (e.g. 'ConnectionResetError: [Errno 104] Connection
+    reset by peer'), which is all the headline needs."""
+    lines = [ln.strip() for ln in (output or "").splitlines() if ln.strip()]
+    return lines[-1] if lines else "no audio produced"
 
 # German dictionary abbreviations -> full words. edge-tts otherwise pronounces
 # "etw." / "jdn." letter-by-letter, so we expand them in the text we synthesize
@@ -114,9 +136,10 @@ def _synthesize(exe, voice, rate, pitch, text, timeout):
 
     if proc.returncode != 0 or not os.path.getsize(path):
         os.remove(path)
-        raise RuntimeError(
-            "edge-tts failed: "
-            + (proc.stderr.strip() or proc.stdout.strip() or "no audio produced")
+        output = proc.stderr.strip() or proc.stdout.strip()
+        raise TTSError(
+            "edge-tts failed: " + _short_reason(output),
+            details=output or None,
         )
     return path
 
@@ -151,7 +174,18 @@ def pronounce(editor, config):
         return
 
     total = len(jobs)
-    overlay.set_step(editor, "tts", label=_progress_msg(0, total), state="active")
+    # Standalone pronounce opens its own cancelable overlay; the "both" flow
+    # reuses the one generate already opened (and its existing cancel token).
+    if overlay.is_shown():
+        token = overlay.current_token()
+        overlay.set_step(editor, "tts", label=_progress_msg(0, total), state="active")
+    else:
+        token = overlay.start(
+            editor, [("tts", _progress_msg(0, total), "active")], cancelable=True
+        )
+
+    def cancelled():
+        return token is not None and token.cancelled
 
     def task():
         # edge-tts calls are network-bound subprocesses (they release the GIL
@@ -169,6 +203,8 @@ def pronounce(editor, config):
                     done[idx] = fut.result()
                 except Exception as exc:
                     errors.append(exc)
+                if cancelled():
+                    break  # stop reporting; on_done discards what's collected
                 # Update the overlay from the main thread as each clip lands.
                 finished = len(done) + len(errors)
                 mw.taskman.run_on_main(
@@ -176,6 +212,11 @@ def pronounce(editor, config):
                         editor, "tts", label=_progress_msg(n, total)
                     )
                 )
+        if cancelled():
+            for path in done.values():  # drop any clips already written
+                if os.path.exists(path):
+                    os.remove(path)
+            return []
         if errors:
             for path in done.values():  # discard partial clips before bailing
                 if os.path.exists(path):
@@ -184,6 +225,8 @@ def pronounce(editor, config):
         return [(idx, done[idx]) for idx, _ in jobs]  # keep original field order
 
     def on_done(future):
+        if cancelled():
+            return  # the Cancel handler already hid the overlay
         try:
             results = future.result()
         except Exception as exc:
@@ -192,6 +235,7 @@ def pronounce(editor, config):
             dialogs.show_error(
                 editor.parentWindow, "TTS failed: %s" % exc,
                 title="Pronunciation failed",
+                details=getattr(exc, "details", None),
             )
             return
         note = editor.note

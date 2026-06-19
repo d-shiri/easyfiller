@@ -9,6 +9,8 @@ each existing deck as a pill. Light/dark aware via Anki's theme manager.
 `show_error` reports a failure with a single dismiss button.
 """
 
+import os
+
 from aqt.qt import (
     QApplication,
     QColor,
@@ -16,17 +18,24 @@ from aqt.qt import (
     QFrame,
     QGraphicsDropShadowEffect,
     QHBoxLayout,
+    QIcon,
     QLabel,
     QLayout,
+    QPainter,
+    QPixmap,
+    QPlainTextEdit,
     QPoint,
     QPushButton,
     QRect,
     QSize,
     Qt,
+    QTimer,
     QVBoxLayout,
     QWidget,
 )
 from aqt.theme import theme_manager
+
+_COPY_ICON = os.path.join(os.path.dirname(__file__), "assets", "icons", "copy.png")
 
 
 class _Dialog(QDialog):
@@ -146,6 +155,61 @@ class _FlowWidget(QWidget):
     def heightForWidth(self, width):
         return self._flow.heightForWidth(width)
 
+    def resizeEvent(self, event):
+        # Pin the widget to the height its rows actually need at the current
+        # width; otherwise the layout reserves only one row's worth and the
+        # wrapped rows below get clipped. Guarded so it settles without looping.
+        super().resizeEvent(event)
+        needed = self._flow.heightForWidth(self.width())
+        if needed != self.minimumHeight():
+            self.setMinimumHeight(needed)
+
+
+def _tinted_icon(path, color):
+    """Load `path` and recolor its opaque pixels to `color`.
+
+    The copy.png is a flat black glyph, invisible on a dark pill -- tinting it to
+    the current text color keeps it readable in both themes. Returns an empty
+    QIcon if the file is missing so the button just shows its text."""
+    pm = QPixmap(path)
+    if pm.isNull():
+        return QIcon()
+    tinted = QPixmap(pm.size())
+    tinted.fill(Qt.GlobalColor.transparent)
+    p = QPainter(tinted)
+    p.drawPixmap(0, 0, pm)
+    p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+    p.fillRect(tinted.rect(), QColor(color))
+    p.end()
+    return QIcon(tinted)
+
+
+class _CopyButton(QPushButton):
+    """A pill/code chip that copies `value` to the clipboard when clicked.
+
+    The copy icon sits to the right of the text (RightToLeft layout), and the
+    label flips to a brief "Copied" confirmation that reverts after a moment, so
+    the click visibly does something.
+    """
+
+    def __init__(self, value, object_name, color):
+        super().__init__()
+        self._value = value
+        self.setObjectName(object_name)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAutoDefault(False)
+        self.setFlat(True)
+        self.setIcon(_tinted_icon(_COPY_ICON, color))
+        self.setIconSize(QSize(13, 13))
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setText(value)
+        self.clicked.connect(self._copy)
+
+    def _copy(self):
+        QApplication.clipboard().setText(self._value)
+        self.setText("Copied")
+        QTimer.singleShot(1100, lambda: self.setText(self._value))
+
 
 def _palette(night):
     if night:
@@ -253,11 +317,20 @@ def confirm_duplicate(parent, word, decks, count=1):
     return result["choice"]
 
 
-def show_error(parent, message, title="Something went wrong"):
+def show_error(parent, message, title="Something went wrong", hint=None, models=None,
+               download=None, recommend=None, details=None):
     """Report a failure in the same styled card as the duplicate prompt.
 
-    `message` is shown selectable so the user can copy the underlying error
-    text. Blocks until dismissed.
+    `message` is shown selectable so the user can copy the underlying error text.
+    `details` is optional long text (e.g. a full CLI traceback) hidden behind a
+    "Show details" toggle in a fixed-height scrollable box, so a wall of text
+    never stretches the card off-screen. `hint` is an optional shell command
+    rendered as a selectable monospace block (e.g. the `ollama pull ...` to fix a
+    missing model); `models` is an optional list of available names shown as
+    pills. `download` is a model name; when set it adds a primary "Download
+    <name>" button. `recommend` is a list of (model, note) tuples rendered as
+    accent download chips. Returns the model name the user chose to download, or
+    None if dismissed. Blocks until dismissed.
     """
     c = _palette(theme_manager.night_mode)
     dlg, card, lay = _make_card(parent, c)
@@ -278,22 +351,98 @@ def show_error(parent, message, title="Something went wrong"):
     body.setWordWrap(True)
     body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     lay.addWidget(body)
-    lay.addSpacing(2)
 
+    if hint:
+        lay.addWidget(_CopyButton(hint, "gaCode", c["text"]))
+
+    if details:
+        # Long technical output (a CLI traceback) lives behind a toggle in a
+        # fixed-height scrollable box; the dialog re-fits each time it opens or
+        # closes so it grows only when the user asks to see it.
+        toggle = QPushButton("Show details")
+        toggle.setObjectName("gaBtn")
+        toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        toggle.setAutoDefault(False)
+        box = QPlainTextEdit()
+        box.setObjectName("gaDetails")
+        box.setReadOnly(True)
+        box.setPlainText(details)
+        box.setFixedHeight(170)
+        box.setVisible(False)
+
+        def _toggle_details():
+            shown = not box.isVisible()
+            box.setVisible(shown)
+            toggle.setText("Hide details" if shown else "Show details")
+            _place(dlg, parent)
+
+        toggle.clicked.connect(_toggle_details)
+        row = QHBoxLayout()
+        row.addWidget(toggle)
+        row.addStretch(1)
+        lay.addLayout(row)
+        lay.addWidget(box)
+
+    if models is not None:
+        caption = QLabel(
+            "Available models (click to copy)" if models else "No models installed"
+        )
+        caption.setObjectName("gaIntro")
+        if models:
+            pills = _FlowWidget(spacing=9)
+            for m in models:
+                pills.add(_CopyButton(m, "gaCopyPill", c["pill_text"]))
+            lay.addLayout(_group(caption, pills))
+        else:
+            lay.addWidget(caption)
+
+    # The chosen download model (None == dismissed); set by any download control.
+    result = {"model": None}
+
+    def pick(model):
+        result["model"] = model
+        dlg.accept()
+
+    if recommend:
+        rcap = QLabel("Or download a recommended model:")
+        rcap.setObjectName("gaIntro")
+        chips = _FlowWidget(spacing=9)
+        for model, note in recommend:
+            chip = QPushButton("↓  " + model)
+            chip.setObjectName("gaDownloadPill")
+            chip.setToolTip(note)
+            chip.setCursor(Qt.CursorShape.PointingHandCursor)
+            chip.setAutoDefault(False)
+            chip.clicked.connect(lambda _checked=False, m=model: pick(m))
+            chips.add(chip)
+        lay.addLayout(_group(rcap, chips))
+
+    lay.addSpacing(6)
+
+    # When a download is offered, Dismiss becomes the secondary button and the
+    # download is primary; otherwise Dismiss alone is primary.
     btns = QHBoxLayout()
     btns.addStretch(1)
     ok = QPushButton("Dismiss")
-    ok.setObjectName("gaPrimary")
+    ok.setObjectName("gaPrimary" if not download else "gaBtn")
     ok.setCursor(Qt.CursorShape.PointingHandCursor)
-    ok.setDefault(True)
+    ok.setAutoDefault(False)
     ok.clicked.connect(dlg.accept)
     btns.addWidget(ok)
+    if download:
+        dl = QPushButton("Download " + download)
+        dl.setObjectName("gaPrimary")
+        dl.setCursor(Qt.CursorShape.PointingHandCursor)
+        dl.setDefault(True)
+        dl.clicked.connect(lambda: pick(download))
+        btns.addWidget(dl)
     lay.addLayout(btns)
 
     dlg.setStyleSheet(_STYLE % c)
     _center(dlg, parent)
-    ok.setFocus()
+    (dl if download else ok).setFocus()
     dlg.exec()
+    return result["model"]
 
 
 def _make_card(parent, c):
@@ -313,8 +462,8 @@ def _make_card(parent, c):
 
     card = QFrame()
     card.setObjectName("gaCard")
-    card.setMinimumWidth(340)
-    card.setMaximumWidth(460)
+    card.setMinimumWidth(380)
+    card.setMaximumWidth(480)
     shadow = QGraphicsDropShadowEffect(card)
     shadow.setBlurRadius(40)
     shadow.setOffset(0, 12)
@@ -331,6 +480,14 @@ def _make_card(parent, c):
 def _center(dlg, parent):
     """Center on the parent (or its screen), clamped fully on-screen so a
     frameless card never lands half off the display."""
+    _place(dlg, parent)
+    # Wrapped flow pills only learn their true height once the event loop has
+    # laid them out, which can be taller than the pre-show sizeHint. Re-fit once
+    # the loop starts (via exec) so the card grows to fit instead of clipping.
+    QTimer.singleShot(0, lambda: dlg.isVisible() and _place(dlg, parent))
+
+
+def _place(dlg, parent):
     dlg.adjustSize()
     screen = (parent.screen() if parent is not None else None) or (
         QApplication.primaryScreen()
@@ -348,6 +505,17 @@ def _center(dlg, parent):
         x = max(avail.left(), min(x, avail.right() - dlg.width()))
         y = max(avail.top(), min(y, avail.bottom() - dlg.height()))
     dlg.move(x, y)
+
+
+def _group(caption, content):
+    """Stack a caption tight above its content as one visual block, so the gap to
+    its own caption is smaller than the layout's gap to the next section."""
+    v = QVBoxLayout()
+    v.setContentsMargins(0, 0, 0, 0)
+    v.setSpacing(7)
+    v.addWidget(caption)
+    v.addWidget(content)
+    return v
 
 
 def _esc(text):
@@ -378,6 +546,29 @@ _STYLE = """
   border-radius:9px; padding:5px 12px; font-size:13px; font-weight:600;
   font-family:-apple-system,'Segoe UI',Roboto,sans-serif;
 }
+#gaCode{
+  background:%(pill_bg)s; color:%(text)s; text-align:left;
+  border:none; border-radius:9px; padding:9px 12px; font-size:12px;
+  font-family:'SF Mono','JetBrains Mono',Menlo,Consolas,monospace;
+}
+#gaCode:hover{ background:%(btn_hover)s; }
+#gaDetails{
+  background:%(pill_bg)s; color:%(text)s;
+  border:none; border-radius:9px; padding:8px 10px; font-size:11px;
+  font-family:'SF Mono','JetBrains Mono',Menlo,Consolas,monospace;
+}
+#gaCopyPill{
+  background:%(pill_bg)s; color:%(pill_text)s; text-align:left;
+  border:none; border-radius:9px; padding:5px 12px; font-size:13px; font-weight:600;
+  font-family:-apple-system,'Segoe UI',Roboto,sans-serif;
+}
+#gaCopyPill:hover{ background:%(btn_hover)s; }
+#gaDownloadPill{
+  background:%(accent)s; color:#ffffff; text-align:left;
+  border:none; border-radius:9px; padding:5px 12px; font-size:13px; font-weight:600;
+  font-family:-apple-system,'Segoe UI',Roboto,sans-serif;
+}
+#gaDownloadPill:hover{ background:%(accent_hover)s; }
 #gaBtn, #gaPrimary{
   border:2px solid transparent; border-radius:9px; padding:8px 16px;
   font-size:13px; font-weight:600;
