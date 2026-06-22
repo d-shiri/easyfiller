@@ -12,7 +12,7 @@ from . import llm_client
 from . import dialogs
 from . import overlay
 from . import tts as tts_module
-from .util import audio_tag, field_index, strip_html
+from .util import audio_tag, field_index, invalid_word_reason, strip_html
 
 
 def get_config():
@@ -173,6 +173,15 @@ def _generate_async(editor, then=None):
         )
         return
     word = strip_html(note.fields[sidx])
+
+    # Validate the typed word up front: reject junk like "___dsd" or "43434_$3rf"
+    # immediately instead of spinning up a generation on it.
+    reason = invalid_word_reason(word)
+    if reason:
+        dialogs.show_error(
+            editor.parentWindow, reason, title="That doesn't look like a word"
+        )
+        return
 
     de_fields = config.get("example_fields", [])
     en_fields = config.get("translation_fields", [])
