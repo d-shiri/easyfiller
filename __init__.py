@@ -10,6 +10,7 @@ from aqt.utils import tooltip
 
 from . import llm_client
 from . import dialogs
+from . import diagnostics
 from . import overlay
 from . import tts as tts_module
 from .util import audio_tag, field_index, invalid_word_reason, strip_html
@@ -496,6 +497,22 @@ def _on_js_message(handled, message, context):
     return handled
 
 
+def _install_menu():
+    """Add the Setup & Diagnostics entry under Tools.
+
+    Add-ons load after Anki's Tools menu is built, so we can append directly at
+    import time; guarded in case mw isn't ready (e.g. headless tests).
+    """
+    if mw is None or not getattr(mw, "form", None):
+        return
+    from aqt.qt import QAction
+
+    action = QAction("EasyFiller: Setup && Diagnostics…", mw)
+    action.triggered.connect(lambda: diagnostics.open_diagnostics(mw))
+    mw.form.menuTools.addAction(action)
+
+
 gui_hooks.editor_did_init_buttons.append(_add_buttons)
 gui_hooks.editor_did_init_shortcuts.append(_add_shortcuts)
 gui_hooks.webview_did_receive_js_message.append(_on_js_message)
+_install_menu()

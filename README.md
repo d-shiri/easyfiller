@@ -55,6 +55,23 @@ Or copy/symlink this folder to `~/.local/share/Anki2/addons21/german_autofill`.
 > The internal package id and folder are `german_autofill`; only the display name
 > ("EasyFiller") differs — that's normal for Anki add-ons.
 
+## Setup & Diagnostics
+
+**Tools → EasyFiller: Setup & Diagnostics** opens a one-screen health check. It
+verifies the three things new users trip over and fixes each on the spot:
+
+- **LLM provider** — probes the Claude CLI (`claude --version`) or pings Ollama;
+  when an Ollama model isn't pulled yet it offers a one-click **Download** with a
+  progress readout.
+- **edge-tts** — confirms the CLI is found and gives a **▶ Play sample** button so
+  you can *hear* the configured voice/speed/pitch before committing to it.
+- **Note type fields** — lists the fields the add-on writes to and, if no note
+  type has them all, **creates a ready-made one** so field names line up
+  automatically.
+
+Each row shows a green ✓ or a red ✗ with the exact fix command (copyable). Use
+this first when something isn't working.
+
 ## Configure
 
 **Tools → Add-ons → EasyFiller → Config**. Change field names, shortcuts, TTS
@@ -85,5 +102,7 @@ Nothing is hard-coded to German — it's all config:
   (no Anki imports; runs in a background thread).
 - `tts.py` — runs the `edge-tts` CLI in a background thread; inserts `[sound:]` on the main thread.
 - `dialogs.py` — the styled duplicate-found dialog.
+- `diagnostics.py` — the **Setup & Diagnostics** panel (dependency checks, voice
+  preview, one-click note-type creation).
 - `overlay.py` / `loaders.py` — the in-editor loading overlay and its spinners.
 - `util.py` — HTML/field helpers.
