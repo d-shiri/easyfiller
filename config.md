@@ -7,7 +7,7 @@ Two one-press helpers for the card editor:
   to fill the English meaning plus two example sentences and their translations.
   Only *empty* fields are filled.
 - **Pronounce** (microphone icon, default `Ctrl+Shift+P`): silently adds TTS audio
-  (via the **edge-tts** CLI — free Microsoft Neural voices) to the configured
+  (built-in engine — free Microsoft Neural voices, no install) to the configured
   `tts_fields`. Fields that already contain a `[sound:...]` tag are skipped.
 - **Both** (document + microphone icon, default `Ctrl+Shift+B`): generate, then pronounce.
 - **Clear** (trash icon, default `Ctrl+Shift+X`): empties every field on the note so
@@ -43,16 +43,18 @@ Two one-press helpers for the card editor:
   still instruct the model to return the same JSON shape. Include a `canonical` field if
   you want `normalize_word` to work. Empty = built-in prompt. (Was `claude_prompt`; the
   old key still works as a fallback.)
-- `edge_tts_path` – path to the `edge-tts` CLI. Leave as `"edge-tts"` to auto-resolve,
-  or set an absolute path if Anki can't find it.
-- `tts_voice` – edge-tts voice name (default `de-DE-AmalaNeural`). List voices with
-  `edge-tts --list-voices`.
-- `tts_speed` – playback rate; `1.25` becomes `--rate +25%`. `tts_pitch` – `0` becomes
-  `--pitch +0Hz`.
+- `edge_tts_path` – path to the optional `edge-tts` CLI. Pronunciation works
+  without it (the built-in engine is used first); if the CLI is installed it acts
+  as an automatic fallback. Leave as `"edge-tts"` to auto-resolve, or set an
+  absolute path.
+- `tts_voice` – Microsoft Neural voice name (default `de-DE-AmalaNeural`). Browse
+  voices in the [Edge-TTS playground](https://huggingface.co/spaces/innoai/Edge-TTS-Text-to-Speech),
+  or with `edge-tts --list-voices` if you have the optional CLI.
+- `tts_speed` – playback rate; `1.25` becomes `+25%`. `tts_pitch` – `0` becomes `+0Hz`.
 - `tts_timeout` – seconds to wait per clip (default 60).
 - `shortcut_*` – keyboard shortcuts.
 
-Requires the **edge-tts** CLI installed (`pipx install edge-tts`, or
-`uv tool install edge-tts`) plus the LLM CLI for your chosen `provider`: either the
-**Claude** CLI signed in (`claude` working in a terminal) or a running **Ollama** install
-with your model pulled (`ollama pull <model>`). No API key is stored here.
+Pronunciation needs no install. You only need the LLM CLI for your chosen
+`provider`: either the **Claude** CLI signed in (`claude` working in a terminal)
+or a running **Ollama** install with your model pulled (`ollama pull <model>`).
+No API key is stored here.

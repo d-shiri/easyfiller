@@ -1,11 +1,73 @@
 """Small helpers shared across the add-on (no Anki imports here)."""
 
 import html
+import os
 import re
+import shutil
+import subprocess
 import unicodedata
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _SOUND_RE = re.compile(r"\[sound:[^\]]+\]")
+
+# --------------------------------------------------------------------------- #
+# Cross-platform process / executable helpers                                 #
+#                                                                             #
+# The add-on shells out to external CLIs (claude, edge-tts). Doing that from a #
+# GUI app portably has two gotchas this module hides so the rest of the code  #
+# can stay platform-agnostic:                                                 #
+#   1. On Windows every subprocess.run on a console app flashes a black        #
+#      console window unless launched with CREATE_NO_WINDOW -- intolerable on  #
+#      a tool fired on every keypress. run_hidden() adds that flag on Windows  #
+#      and is a no-op elsewhere.                                              #
+#   2. A bare name like "claude" must also resolve to "claude.exe"/".cmd" on   #
+#      Windows, and tools installed by pipx / the native installers live in    #
+#      ~/.local/bin (true on all three OSes) which Anki's stripped PATH often  #
+#      misses. resolve_executable() handles both.                            #
+# --------------------------------------------------------------------------- #
+IS_WINDOWS = os.name == "nt"
+
+
+def run_hidden(cmd, **kwargs):
+    """subprocess.run that never flashes a console window on Windows."""
+    if IS_WINDOWS:
+        # CREATE_NO_WINDOW exists only on Windows; safe to reference here.
+        kwargs.setdefault("creationflags", subprocess.CREATE_NO_WINDOW)
+    return subprocess.run(cmd, **kwargs)
+
+
+def _exe_candidates(path):
+    """Filenames to try for `path`. On Windows a name with no extension also
+    matches the .exe / .cmd / .bat the installer actually produced."""
+    if not IS_WINDOWS or os.path.splitext(path)[1]:
+        return [path]
+    return [path + ext for ext in (".exe", ".cmd", ".bat", "")]
+
+
+def resolve_executable(configured, default, prefer_dirs=("~/.local/bin",)):
+    """Best-effort absolute path to an external CLI, portably.
+
+    Resolution order, first hit wins: an absolute `configured` path that exists;
+    the tool inside each `prefer_dirs` entry (where pipx and the native installers
+    drop it, ahead of PATH so Anki's minimal PATH can't shadow it with a broken
+    shim); then a normal PATH lookup. Returns the configured/default name
+    unchanged when nothing is found, so the caller still surfaces a clear
+    "not found" error. On Windows every step also tries the .exe/.cmd suffixes.
+    """
+    name = configured or default
+    if name and os.path.isabs(name):
+        for cand in _exe_candidates(name):
+            if os.path.exists(cand):
+                return cand
+    base = os.path.basename(name or default)
+    for d in prefer_dirs:
+        for cand in _exe_candidates(os.path.join(os.path.expanduser(d), base)):
+            if os.path.exists(cand):
+                return cand
+    found = shutil.which(name or default)
+    if found:
+        return found
+    return name or default
 
 # Characters allowed in a headword/phrase besides letters: the separators that
 # join or surround words (spaces, hyphens, apostrophes, a trailing period for

@@ -17,7 +17,6 @@ and copy-chip are borrowed from dialogs.py so this matches the rest of the UI.
 """
 
 import os
-import shutil
 import subprocess
 
 from aqt import mw
@@ -36,6 +35,7 @@ from aqt.utils import tooltip
 from . import dialogs
 from . import llm_client
 from . import tts
+from .util import run_hidden
 
 # The add-on's package name (this module is german_autofill.diagnostics), which is
 # the key addonManager stores config under.
@@ -160,7 +160,7 @@ def _check_claude(config):
     exe = llm_client.resolve_claude_path(config.get("claude_path", "claude"))
     model = (config.get("claude_model") or "").strip() or "default"
     try:
-        proc = subprocess.run(
+        proc = run_hidden(
             [exe, "--version"],
             capture_output=True,
             text=True,
@@ -537,21 +537,20 @@ def open_diagnostics(parent):
 
     def run_tts_check():
         config = _get_config()
-        exe = tts.resolve_edge_tts_path(config.get("edge_tts_path", "edge-tts"))
         voice = config.get("tts_voice") or tts.DEFAULT_VOICE
-        if os.path.exists(exe) or shutil.which(exe):
-            tts_row.set_result(
-                "ok", "edge-tts ready",
-                "%s · voice %s · rate %s" % (exe, voice, tts._rate_arg(config.get("tts_speed", 1.25))),
-            )
-            tts_row.set_action("▶  Play sample", play_sample)
+        rate = tts._rate_arg(config.get("tts_speed", 1.25))
+        # Pronunciation is built in (no install required); the external edge-tts
+        # CLI, if present, only serves as an automatic fallback.
+        exe = tts.resolve_edge_tts_path(config.get("edge_tts_path", "edge-tts"))
+        if tts._cli_available(exe):
+            engine = "built-in engine · CLI fallback available (%s)" % exe
         else:
-            tts_row.set_result(
-                "error", "edge-tts not found",
-                "Looked for “%s”. Install it, or set \"edge_tts_path\" to its "
-                "absolute path." % exe,
-            )
-            tts_row.set_hint("pipx install edge-tts")
+            engine = "built-in engine · no install needed"
+        tts_row.set_result(
+            "ok", "Pronunciation ready",
+            "%s · voice %s · rate %s" % (engine, voice, rate),
+        )
+        tts_row.set_action("▶  Play sample", play_sample)
         refit()
 
     # ---- Note type fields (sync) ------------------------------------------ #

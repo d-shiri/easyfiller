@@ -15,7 +15,6 @@ or set "edge_tts_path" in the add-on config to its absolute path.
 import concurrent.futures
 import os
 import re
-import shutil
 import subprocess
 import tempfile
 
@@ -23,8 +22,9 @@ from aqt import mw
 from aqt.utils import tooltip
 
 from . import dialogs
+from . import edge_tts_native
 from . import overlay
-from .util import field_index, has_audio, strip_html
+from .util import field_index, has_audio, resolve_executable, run_hidden, strip_html
 
 DEFAULT_VOICE = "de-DE-AmalaNeural"
 
@@ -83,17 +83,13 @@ def expand_abbreviations(text):
 
 
 def resolve_edge_tts_path(configured):
-    """Best-effort resolution of the edge-tts executable."""
-    if configured and os.path.isabs(configured) and os.path.exists(configured):
-        return configured
-    found = shutil.which(configured or "edge-tts")
-    if found:
-        return found
-    # Anki launches with a minimal PATH; check the common user install dir too.
-    local = os.path.expanduser("~/.local/bin/edge-tts")
-    if os.path.exists(local):
-        return local
-    return configured or "edge-tts"
+    """Best-effort resolution of the edge-tts executable, portably.
+
+    pipx / `uv tool` drop the CLI in ~/.local/bin on every OS (with a .exe on
+    Windows); the shared resolver checks there and on PATH. Anki launches with a
+    minimal PATH, so the explicit ~/.local/bin probe is what makes it findable.
+    """
+    return resolve_executable(configured, "edge-tts")
 
 
 def _rate_arg(speed):
@@ -112,12 +108,38 @@ def _progress_msg(done, total):
     return "Adding pronunciation…"
 
 
+def _cli_available(exe):
+    """True only when `exe` resolved to a real file -- i.e. the edge-tts CLI is
+    actually installed. resolve_edge_tts_path() returns the bare name when it
+    isn't found, so a non-absolute/non-existent path means "no CLI"."""
+    return bool(exe) and os.path.isabs(exe) and os.path.exists(exe)
+
+
 def _synthesize(exe, voice, rate, pitch, text, timeout):
-    """Run edge-tts to a temp mp3 and return its path (caller deletes it)."""
+    """Synthesize one clip to a temp mp3 and return its path (caller deletes it).
+
+    Uses the built-in, zero-install engine (edge_tts_native) first. If that fails
+    and the user happens to have the edge-tts CLI installed, fall back to it --
+    so a protocol change we haven't caught up to is still recoverable -- and
+    otherwise re-raise the built-in error.
+    """
+    try:
+        return edge_tts_native.synthesize(voice, rate, pitch, text, timeout=timeout)
+    except Exception as native_exc:
+        if not _cli_available(exe):
+            raise TTSError("edge-tts failed: " + _short_reason(str(native_exc)))
+        try:
+            return _synthesize_cli(exe, voice, rate, pitch, text, timeout)
+        except Exception:
+            raise native_exc
+
+
+def _synthesize_cli(exe, voice, rate, pitch, text, timeout):
+    """Fallback: run the external edge-tts CLI to a temp mp3 and return its path."""
     fd, path = tempfile.mkstemp(suffix=".mp3")
     os.close(fd)
     try:
-        proc = subprocess.run(
+        proc = run_hidden(
             [exe, "--voice", voice, "--rate", rate, "--pitch", pitch,
              "--text", text, "--write-media", path],
             capture_output=True,

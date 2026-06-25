@@ -3,6 +3,7 @@
 Adds four editor buttons and four shortcuts (generate / pronounce / both / clear).
 """
 
+import concurrent.futures
 import os
 
 from aqt import gui_hooks, mw
@@ -240,7 +241,9 @@ def _generate_async(editor, then=None):
     if sentences:
         n = len(sentences)
         label = "Translating existing sentence" + ("s" if n > 1 else "")
-        steps.append(("translate", label, "active" if not word else "pending"))
+        # Runs concurrently with generation (independent LLM calls), so it's
+        # active from the start rather than waiting for "gen" to finish.
+        steps.append(("translate", label, "active"))
     if then is not None:  # the "both" flow will run pronunciation after this
         steps.append(("tts", "Adding pronunciation", "pending"))
     token = overlay.start(
@@ -251,21 +254,35 @@ def _generate_async(editor, then=None):
         mw.taskman.run_on_main(fn)
 
     def work():
-        data = None
+        # Generation and translation are independent LLM calls; when the card
+        # needs both (a word to generate AND pre-typed sentences to translate),
+        # run them concurrently so the total wait is max(gen, translate) instead
+        # of their sum. A single task just runs inline.
         if token.cancelled:
             return None, {}
-        if word:
-            data = llm_client.generate(word, config, avoid=avoid)
+        result = {"data": None, "translations": {}}
+
+        def do_generate():
+            result["data"] = llm_client.generate(word, config, avoid=avoid)
             on_main(lambda: overlay.set_step(editor, "gen", state="done"))
-            if sentences:
-                on_main(lambda: overlay.set_step(editor, "translate", state="active"))
-        if token.cancelled:
-            return None, {}
-        translations = {}
-        if sentences:
-            translations = dict(zip(keys, llm_client.translate(sentences, config)))
+
+        def do_translate():
+            result["translations"] = dict(zip(keys, llm_client.translate(sentences, config)))
             on_main(lambda: overlay.set_step(editor, "translate", state="done"))
-        return data, translations
+
+        tasks = []
+        if word:
+            tasks.append(do_generate)
+        if sentences:
+            tasks.append(do_translate)
+        if len(tasks) == 1:
+            tasks[0]()
+        elif tasks:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(tasks)) as ex:
+                futures = [ex.submit(t) for t in tasks]
+                for fut in concurrent.futures.as_completed(futures):
+                    fut.result()  # surface the first error (the other is awaited on exit)
+        return result["data"], result["translations"]
 
     # Use taskman (not QueryOp) so Anki doesn't pop its own "Processing…" dialog
     # on top of our overlay -- our overlay is the only progress indicator.

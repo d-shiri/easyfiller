@@ -19,11 +19,12 @@ import json
 import os
 import random
 import re
-import shutil
 import string
 import subprocess
 import urllib.error
 import urllib.request
+
+from .util import IS_WINDOWS, resolve_executable, run_hidden
 
 PROMPT_TEMPLATE = (
     "You are a German teacher creating Anki flashcards. "
@@ -100,40 +101,44 @@ TRANSLATE_TEMPLATE = (
 def resolve_claude_path(configured):
     """Best-effort resolution of the claude executable.
 
-    Prefer the self-contained native binary (~/.local/bin/claude), which does NOT
-    depend on `node`. Anki's stripped PATH typically resolves `claude` to the npm
-    shim (/usr/local/bin/claude -> cli.js, '#!/usr/bin/env node'), which fails when
-    node isn't on PATH.
+    Prefer the self-contained native binary (~/.local/bin/claude on every OS,
+    `.exe` on Windows), which does NOT depend on `node`. Anki's stripped PATH
+    typically resolves `claude` to the npm shim (-> cli.js, '#!/usr/bin/env node'
+    on Unix, claude.cmd on Windows), which fails when node isn't on PATH. The
+    shared resolver checks ~/.local/bin ahead of PATH so the native binary wins.
     """
-    if configured and os.path.isabs(configured) and os.path.exists(configured):
-        return configured
-    # Prefer the self-contained native binary (no node dependency).
-    native = os.path.expanduser("~/.local/bin/claude")
-    if os.path.exists(native) or os.path.islink(native):
-        return native
-    found = shutil.which(configured or "claude")
-    if found:
-        return found
-    return configured or "claude"
+    return resolve_executable(configured, "claude")
 
 
 def _node_dirs():
-    """Directories that may contain a `node` binary, newest first.
+    """Directories that may contain a `node`/`node.exe` binary, newest first.
 
     Used to repair PATH for a node-based claude shim when Anki launches with a
-    minimal environment (no nvm/fnm/volta shims loaded).
+    minimal environment (no nvm/fnm/volta shims loaded). Covers the common Unix
+    version managers plus Windows' nvm-windows / global npm install dir.
     """
+    node = "node.exe" if IS_WINDOWS else "node"
     dirs = []
-    nvm = os.environ.get("NVM_DIR") or os.path.expanduser("~/.config/nvm")
-    for base in (nvm, os.path.expanduser("~/.nvm")):
-        dirs += sorted(glob.glob(os.path.join(base, "versions/node/*/bin")), reverse=True)
-    dirs += sorted(
-        glob.glob(os.path.expanduser("~/.local/share/fnm/node-versions/*/installation/bin")),
-        reverse=True,
-    )
-    dirs.append(os.path.expanduser("~/.volta/bin"))
-    dirs += ["/usr/local/bin", "/usr/bin"]
-    return [d for d in dirs if os.path.exists(os.path.join(d, "node"))]
+    if IS_WINDOWS:
+        appdata = os.environ.get("APPDATA", "")
+        nvm_home = os.environ.get("NVM_HOME") or os.environ.get("NVM_SYMLINK", "")
+        for base in (nvm_home, os.path.join(appdata, "nvm") if appdata else ""):
+            if base:
+                dirs += sorted(glob.glob(os.path.join(base, "v*")), reverse=True)
+        if appdata:
+            dirs.append(os.path.join(appdata, "npm"))  # global npm bin
+        dirs += [r"C:\Program Files\nodejs"]
+    else:
+        nvm = os.environ.get("NVM_DIR") or os.path.expanduser("~/.config/nvm")
+        for base in (nvm, os.path.expanduser("~/.nvm")):
+            dirs += sorted(glob.glob(os.path.join(base, "versions/node/*/bin")), reverse=True)
+        dirs += sorted(
+            glob.glob(os.path.expanduser("~/.local/share/fnm/node-versions/*/installation/bin")),
+            reverse=True,
+        )
+        dirs.append(os.path.expanduser("~/.volta/bin"))
+        dirs += ["/usr/local/bin", "/usr/bin"]
+    return [d for d in dirs if os.path.exists(os.path.join(d, node))]
 
 
 def _build_env():
@@ -158,7 +163,7 @@ def _run_claude(prompt, config, fmt=None):
         cmd += ["--model", model]
     timeout = _timeout(config)
     try:
-        proc = subprocess.run(
+        proc = run_hidden(
             cmd, capture_output=True, text=True, timeout=timeout, env=_build_env()
         )
     except FileNotFoundError:
