@@ -347,7 +347,7 @@ def translate(sentences, config):
     return [str(x) for x in data]
 
 
-def generate(word, config, avoid=None):
+def generate(word, config, avoid=None, instruction=None):
     """Return {"meaning": str, "examples": [{"de","en"}, {"de","en"}]}.
 
     The built-in prompt also returns "canonical" (the dictionary citation form);
@@ -355,7 +355,10 @@ def generate(word, config, avoid=None):
 
     `avoid` is a list of example sentences already on the card; the model is told to
     write different ones (otherwise it returns the same "canonical" example for a
-    given word every time). Raises RuntimeError/ValueError on failure.
+    given word every time). `instruction` is optional free text from the user (e.g.
+    "use the word Reise", "make them about cooking") appended to steer the example
+    sentences; it never overrides the required JSON shape. Raises
+    RuntimeError/ValueError on failure.
     """
     # A custom prompt (advanced) must keep the "{word}" placeholder and still ask
     # for the same JSON shape; use .replace so its literal braces don't break.
@@ -367,6 +370,12 @@ def generate(word, config, avoid=None):
             "\nThese example sentences are already used -- do NOT repeat or "
             "paraphrase them, write clearly different ones:\n- "
             + "\n- ".join(avoid)
+        )
+    if instruction and instruction.strip():
+        prompt += (
+            "\nAdditional instructions from the user for the example sentences -- "
+            "follow them, but keep the exact JSON shape required above:\n"
+            + instruction.strip()
         )
     # A random token nudges the model off its deterministic default so repeated
     # regenerations actually differ. Output instructions above forbid echoing it.

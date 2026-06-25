@@ -18,6 +18,10 @@ From a word in the source field (**Back** by default):
     example in the form you typed (toggle with `normalize_word`);
   - **checks every deck for duplicates** — if the word (or its dictionary form)
     already exists, a dialog offers **See duplicate / Cancel / Generate anyway**.
+- **Regenerate** (`Ctrl+Shift+R`) — write fresh example sentences and translations,
+  **overwriting** the current ones. A box first lets you optionally steer them
+  (e.g. *"use the word Reise"*, *"make them about cooking"*, *"keep them short"*);
+  leave it blank for different examples. The word and meaning are left as they are.
 - **Pronounce** (`Ctrl+Shift+P`) — silently add TTS audio (`[sound:...]`) to the
   configured fields using the **built-in TTS engine** (free Microsoft Neural
   voices, no install, no API key). Fields that already contain audio are skipped.

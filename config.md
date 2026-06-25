@@ -6,6 +6,11 @@ Two one-press helpers for the card editor:
   `source_field` and uses a local LLM CLI (**Claude** or **Ollama**, see `provider`)
   to fill the English meaning plus two example sentences and their translations.
   Only *empty* fields are filled.
+- **Regenerate** (default `Ctrl+Shift+R`): pops up a box where you can optionally
+  type how you want the new examples (e.g. “use the word Reise”, “make them about
+  cooking”, “keep them short”), then **overwrites** the example sentences and their
+  translations with fresh ones. Leave the box blank for different examples. The word
+  and meaning are left untouched.
 - **Pronounce** (microphone icon, default `Ctrl+Shift+P`): silently adds TTS audio
   (built-in engine — free Microsoft Neural voices, no install) to the configured
   `tts_fields`. Fields that already contain a `[sound:...]` tag are skipped.

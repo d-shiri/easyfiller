@@ -1,6 +1,7 @@
 """EasyFiller: fill meaning + examples with Claude, add edge-tts pronunciation.
 
-Adds four editor buttons and four shortcuts (generate / pronounce / both / clear).
+Adds five editor buttons and five shortcuts (generate / regenerate / pronounce /
+both / clear).
 """
 
 import concurrent.futures
@@ -162,7 +163,16 @@ def _download_model(editor, model, on_ready):
     mw.taskman.run_in_background(work, on_done)
 
 
-def _generate_async(editor, then=None):
+def _generate_async(editor, then=None, regenerate=False, instruction=None):
+    """Generate (or regenerate) meaning + examples for the note's word.
+
+    In the default (fill) mode only empty fields are written. In `regenerate`
+    mode the example and translation fields are OVERWRITTEN with fresh sentences
+    (meaning and the normalized word are left untouched), and `instruction` --
+    optional free text from the user -- steers the new examples. The current
+    sentences are passed to the model as things to avoid, so a blank instruction
+    still yields different examples.
+    """
     config = get_config()
     note = editor.note
     source = config.get("source_field", "Back")
@@ -203,7 +213,10 @@ def _generate_async(editor, then=None):
         # Sentences already on the card, so Claude writes new ones instead of
         # repeating its canonical example for this word.
         avoid.append(existing)
-        if i < len(en_fields):
+        # In regenerate mode we replace these sentences wholesale, so there's
+        # nothing to translate-in-place -- the fresh examples carry their own
+        # translations.
+        if not regenerate and i < len(en_fields):
             en_idx = field_index(note, en_fields[i])
             if en_idx is not None and not strip_html(note.fields[en_idx]):
                 to_translate[i] = existing
@@ -218,18 +231,22 @@ def _generate_async(editor, then=None):
 
     # Warn (but don't block) if this word already lives in another deck. We keep
     # the matched note ids so the post-generation lemma re-check (see on_done)
-    # only re-prompts for notes the user hasn't already been shown here.
-    nids, dupes = _find_duplicates(word, note, config)
-    precheck_nids = set(nids)
-    if nids:
-        choice = dialogs.confirm_duplicate(
-            editor.parentWindow, word, dupes, len(nids)
-        )
-        if choice == "view":
-            _open_in_browser(nids)
-            return
-        if choice != "generate":
-            return
+    # only re-prompts for notes the user hasn't already been shown here. Skipped
+    # when regenerating: it's the same card, the word is already on it, and the
+    # user only wants different example sentences.
+    precheck_nids = set()
+    if not regenerate:
+        nids, dupes = _find_duplicates(word, note, config)
+        precheck_nids = set(nids)
+        if nids:
+            choice = dialogs.confirm_duplicate(
+                editor.parentWindow, word, dupes, len(nids)
+            )
+            if choice == "view":
+                _open_in_browser(nids)
+                return
+            if choice != "generate":
+                return
 
     keys = list(to_translate.keys())
     sentences = [to_translate[k] for k in keys]
@@ -237,7 +254,8 @@ def _generate_async(editor, then=None):
     # Build the step checklist for this run: only the stages we'll actually do.
     steps = []
     if word:
-        steps.append(("gen", "Generating examples & meaning", "active"))
+        gen_label = "Regenerating examples" if regenerate else "Generating examples & meaning"
+        steps.append(("gen", gen_label, "active"))
     if sentences:
         n = len(sentences)
         label = "Translating existing sentence" + ("s" if n > 1 else "")
@@ -263,7 +281,9 @@ def _generate_async(editor, then=None):
         result = {"data": None, "translations": {}}
 
         def do_generate():
-            result["data"] = llm_client.generate(word, config, avoid=avoid)
+            result["data"] = llm_client.generate(
+                word, config, avoid=avoid, instruction=instruction
+            )
             on_main(lambda: overlay.set_step(editor, "gen", state="done"))
 
         def do_translate():
@@ -311,12 +331,18 @@ def _generate_async(editor, then=None):
             if chosen:
                 # Pull the model with a progress bar, then retry the whole flow
                 # (re-reading the note) so the just-downloaded model is used.
-                _download_model(editor, chosen, lambda: _generate_async(editor, then))
+                _download_model(
+                    editor,
+                    chosen,
+                    lambda: _generate_async(editor, then, regenerate, instruction),
+                )
             return
-        if not _lemma_dup_ok(editor, data, word, precheck_nids, config):
+        # The lemma re-check only matters in fill mode; regenerate never rewrites
+        # the word, so there's no new canonical form to re-check against.
+        if not regenerate and not _lemma_dup_ok(editor, data, word, precheck_nids, config):
             overlay.hide(editor)
             return
-        _apply_generated(editor, data, translations, config)
+        _apply_generated(editor, data, translations, config, regenerate=regenerate)
         if then:
             then()  # next stage (pronounce) keeps the overlay up and hides it
         else:
@@ -325,13 +351,16 @@ def _generate_async(editor, then=None):
     mw.taskman.run_in_background(work, on_done)
 
 
-def _apply_generated(editor, data, translations, config):
+def _apply_generated(editor, data, translations, config, regenerate=False):
     note = editor.note
     changed = False
     de_fields = config.get("example_fields", [])
     en_fields = config.get("translation_fields", [])
 
-    if data:
+    # Regenerate replaces only the example/translation pairs; it must not touch
+    # the already-correct word or meaning, so the normalize + meaning steps are
+    # fill-mode only.
+    if data and not regenerate:
         # Rewrite the source field to the dictionary citation form (e.g.
         # "herausforderung" -> "die Herausforderung", "studiert" -> "studieren").
         # This is the one field we intentionally OVERWRITE; any existing
@@ -354,17 +383,20 @@ def _apply_generated(editor, data, translations, config):
             note.fields[midx] = meaning
             changed = True
 
-        # A generated German sentence and its English translation are a pair.
-        # Only fill an EMPTY German field -- and when we do, OVERWRITE the paired
-        # translation, since the old one belonged to a different sentence and is
-        # now stale. If the German field already has text, leave both alone.
+    if data:
+        # A generated German sentence and its English translation are a pair. In
+        # fill mode we only write an EMPTY German field; in regenerate mode we
+        # OVERWRITE whatever is there. Either way, when we set the German we also
+        # set the paired translation, since the old one is now stale.
         for i, ex in enumerate(data.get("examples", [])):
             if i >= len(de_fields):
                 break
             de_idx = field_index(note, de_fields[i])
             de = ex.get("de", "")
-            if de_idx is None or not de or strip_html(note.fields[de_idx]):
+            if de_idx is None or not de:
                 continue
+            if not regenerate and strip_html(note.fields[de_idx]):
+                continue  # fill mode: leave an already-filled German field alone
             note.fields[de_idx] = de
             changed = True
             if i < len(en_fields):
@@ -386,7 +418,7 @@ def _apply_generated(editor, data, translations, config):
 
     if changed:
         editor.set_note(note)
-        tooltip("Filled empty fields from Claude.")
+        tooltip("Regenerated examples." if regenerate else "Filled empty fields from Claude.")
     else:
         tooltip("Nothing to fill (fields already populated).")
 
@@ -396,6 +428,21 @@ def _apply_generated(editor, data, translations, config):
 # --------------------------------------------------------------------------- #
 def on_generate(editor):
     editor.call_after_note_saved(lambda: _generate_async(editor))
+
+
+def on_regenerate(editor):
+    """Ask for optional guidance, then overwrite the examples with fresh ones.
+
+    The prompt is shown first; a cancel leaves the note untouched. An empty
+    instruction is valid (it just means "different examples"), so we only abort
+    on None (the dialog was dismissed).
+    """
+    instruction = dialogs.ask_instruction(editor.parentWindow)
+    if instruction is None:
+        return
+    editor.call_after_note_saved(
+        lambda: _generate_async(editor, regenerate=True, instruction=instruction)
+    )
 
 
 def on_pronounce(editor):
@@ -435,8 +482,17 @@ def on_both(editor):
 _ICON_DIR = os.path.join(os.path.dirname(__file__), "assets", "icons")
 
 
-def _icon(name):
-    """Absolute path to an editor-button icon (Anki inlines it as a data URI)."""
+def _icon(name, *fallbacks):
+    """Absolute path to an editor-button icon (Anki inlines it as a data URI).
+
+    Falls back to the first existing alternative when `name.png` is missing, so a
+    dedicated icon (e.g. regenerate.png) is used once dropped in, but the button
+    still renders with a sensible stand-in until then.
+    """
+    for candidate in (name, *fallbacks):
+        path = os.path.join(_ICON_DIR, candidate + ".png")
+        if os.path.exists(path):
+            return path
     return os.path.join(_ICON_DIR, name + ".png")
 
 
@@ -449,6 +505,15 @@ def _add_buttons(buttons, editor):
             lambda ed: on_generate(ed),
             tip="Generate meaning + examples (Claude) — %s"
             % config.get("shortcut_generate", "Ctrl+Shift+G"),
+        )
+    )
+    buttons.append(
+        editor.addButton(
+            _icon("regenerate", "generate"),
+            "de_regenerate",
+            lambda ed: on_regenerate(ed),
+            tip="Regenerate examples with your own instructions — %s"
+            % config.get("shortcut_regenerate", "Ctrl+Shift+R"),
         )
     )
     buttons.append(
@@ -485,6 +550,9 @@ def _add_shortcuts(shortcuts, editor):
     config = get_config()
     shortcuts.append(
         (config.get("shortcut_generate", "Ctrl+Shift+G"), lambda: on_generate(editor), True)
+    )
+    shortcuts.append(
+        (config.get("shortcut_regenerate", "Ctrl+Shift+R"), lambda: on_regenerate(editor), True)
     )
     shortcuts.append(
         (config.get("shortcut_pronounce", "Ctrl+Shift+P"), lambda: on_pronounce(editor), True)

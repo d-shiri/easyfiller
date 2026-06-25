@@ -18,6 +18,7 @@
   "tts_pitch": 0,
   "tts_timeout": 60,
   "shortcut_generate": "Ctrl+Shift+G",
+  "shortcut_regenerate": "Ctrl+Shift+R",
   "shortcut_pronounce": "Ctrl+Shift+P",
   "shortcut_both": "Ctrl+Shift+B",
   "shortcut_clear": "Ctrl+Shift+X"

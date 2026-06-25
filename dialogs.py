@@ -19,6 +19,7 @@ from aqt.qt import (
     QGraphicsDropShadowEffect,
     QHBoxLayout,
     QIcon,
+    QKeySequence,
     QLabel,
     QLayout,
     QPainter,
@@ -27,6 +28,7 @@ from aqt.qt import (
     QPoint,
     QPushButton,
     QRect,
+    QShortcut,
     QSize,
     Qt,
     QTimer,
@@ -317,6 +319,76 @@ def confirm_duplicate(parent, word, decks, count=1):
     return result["choice"]
 
 
+def ask_instruction(parent):
+    """Prompt for optional free-text guidance before regenerating examples.
+
+    Returns the typed text (possibly an empty string when the user just hits
+    Regenerate without typing) or None if the dialog was cancelled. Ctrl+Enter
+    submits without leaving the text box. Same styled card as the other dialogs.
+    """
+    c = _palette(theme_manager.night_mode)
+    dlg, card, lay = _make_card(parent, c)
+
+    head = QHBoxLayout()
+    head.setSpacing(12)
+    icon = QLabel("✨")
+    icon.setObjectName("gaIcon")
+    title = QLabel("Regenerate examples")
+    title.setObjectName("gaTitle")
+    head.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
+    head.addWidget(title, 1)
+    lay.addLayout(head)
+
+    intro = QLabel(
+        "Write fresh example sentences and translations, replacing the current "
+        "ones. Optionally tell the model how — e.g. “use the word Reise”, "
+        "“make them about cooking”, or “keep them very short”. "
+        "Leave blank for different examples."
+    )
+    intro.setObjectName("gaIntro")
+    intro.setWordWrap(True)
+    lay.addWidget(intro)
+
+    box = QPlainTextEdit()
+    box.setObjectName("gaInput")
+    box.setPlaceholderText("Optional instructions…")
+    box.setFixedHeight(92)
+    lay.addWidget(box)
+
+    result = {"text": None}
+
+    def submit():
+        result["text"] = box.toPlainText().strip()
+        dlg.accept()
+
+    # Ctrl+Enter (and the keypad variant) submits from inside the text box, where
+    # plain Enter inserts a newline.
+    for seq in ("Ctrl+Return", "Ctrl+Enter"):
+        QShortcut(QKeySequence(seq), dlg, activated=submit)
+
+    btns = QHBoxLayout()
+    btns.addStretch(1)
+    cancel = QPushButton("Cancel")
+    cancel.setObjectName("gaBtn")
+    cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+    cancel.setAutoDefault(False)
+    cancel.clicked.connect(dlg.reject)
+    proceed = QPushButton("Regenerate")
+    proceed.setObjectName("gaPrimary")
+    proceed.setCursor(Qt.CursorShape.PointingHandCursor)
+    proceed.setAutoDefault(False)
+    proceed.clicked.connect(submit)
+    btns.addWidget(cancel)
+    btns.addWidget(proceed)
+    lay.addLayout(btns)
+
+    dlg.setStyleSheet(_STYLE % c)
+    _center(dlg, parent)
+    box.setFocus()
+    dlg.exec()
+    return result["text"]
+
+
 def show_error(parent, message, title="Something went wrong", hint=None, models=None,
                download=None, recommend=None, details=None):
     """Report a failure in the same styled card as the duplicate prompt.
@@ -557,6 +629,12 @@ _STYLE = """
   border:none; border-radius:9px; padding:8px 10px; font-size:11px;
   font-family:'SF Mono','JetBrains Mono',Menlo,Consolas,monospace;
 }
+#gaInput{
+  background:%(pill_bg)s; color:%(text)s;
+  border:2px solid transparent; border-radius:9px; padding:7px 9px; font-size:13px;
+  font-family:-apple-system,'Segoe UI',Roboto,sans-serif;
+}
+#gaInput:focus{ border-color:%(accent)s; }
 #gaCopyPill{
   background:%(pill_bg)s; color:%(pill_text)s; text-align:left;
   border:none; border-radius:9px; padding:5px 12px; font-size:13px; font-weight:600;
