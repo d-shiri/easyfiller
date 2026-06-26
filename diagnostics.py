@@ -1,13 +1,16 @@
 """Setup & Diagnostics panel: a one-screen health check for the add-on.
 
-Reached from **Tools -> EasyFiller: Setup & Diagnostics**. It verifies the three
-things a new user trips over -- the LLM provider, the edge-tts CLI, and whether a
-note type with the configured fields exists -- and lets them fix each on the spot:
+Reached from **Tools -> EasyFiller: Setup & Diagnostics**. It verifies the things
+a new user trips over -- the LLM provider, the edge-tts CLI, the optional voice-input
+CLI, and whether a note type with the configured fields exists -- and lets them fix
+each on the spot:
 
   * the LLM row probes Claude (`claude --version`) or Ollama (its HTTP API) and,
     when an Ollama model is missing, offers a one-click download with progress;
   * the edge-tts row confirms the CLI is found and plays a spoken sample in the
     configured voice/rate/pitch so the choice can be heard before committing;
+  * the voice-input row checks the optional whisper-ctranslate2 CLI behind the
+    Regenerate "Speak" button, showing the install command when it's missing;
   * the fields row lists the required fields and, when no note type has them all,
     creates a ready-made one.
 
@@ -34,6 +37,7 @@ from aqt.utils import tooltip
 
 from . import dialogs
 from . import llm_client
+from . import stt
 from . import tts
 from .util import run_hidden
 
@@ -237,6 +241,50 @@ def _check_ollama(config):
     }
 
 
+def _check_stt(config):
+    """Probe the whisper-ctranslate2 CLI behind the Regenerate "Speak" button.
+
+    Voice input is optional, so a missing CLI is a warning (not a red error). When
+    the CLI is found we actually run it (`--help`) to confirm its native deps load,
+    catching a broken install rather than just a present file.
+    """
+    exe = stt.resolve_whisper_path(config.get("whisper_path", stt.DEFAULT_CLI))
+    if not (os.path.isabs(exe) and os.path.exists(exe)):
+        return {
+            "state": "warn",
+            "title": "Voice input not set up (optional)",
+            "detail": "The “whisper-ctranslate2” command wasn’t found, so the "
+            "microphone button in Regenerate is off. Install it to dictate "
+            "instructions by voice — offline, no API key — or set “whisper_path” "
+            "in the config to its absolute path.",
+            "hint": stt.INSTALL_HINT,
+        }
+    model = (config.get("whisper_model") or stt.DEFAULT_MODEL).strip()
+    try:
+        proc = run_hidden([exe, "--help"], capture_output=True, text=True, timeout=40)
+    except subprocess.TimeoutExpired:
+        return {
+            "state": "warn",
+            "title": "Voice input CLI didn’t respond",
+            "detail": "“%s --help” timed out after 40s." % exe,
+        }
+    except Exception as exc:
+        return {"state": "error", "title": "Voice input CLI error", "detail": str(exc)}
+
+    if proc.returncode == 0:
+        return {
+            "state": "ok",
+            "title": "Voice input ready",
+            "detail": "%s · model %s\nThe model (~150 MB) downloads itself the "
+            "first time you dictate." % (exe, model),
+        }
+    return {
+        "state": "warn",
+        "title": "Voice input CLI returned an error",
+        "detail": proc.stderr.strip() or proc.stdout.strip() or "unknown error",
+    }
+
+
 def _play_file(path):
     """Play a synthesized clip through Anki's audio, deleting it shortly after.
 
@@ -432,8 +480,9 @@ def open_diagnostics(parent):
 
     llm_row = _StatusRow(c)
     tts_row = _StatusRow(c)
+    stt_row = _StatusRow(c)
     fields_row = _StatusRow(c)
-    for r in (llm_row, tts_row, fields_row):
+    for r in (llm_row, tts_row, stt_row, fields_row):
         lay.addWidget(r)
 
     # ---- LLM (background) ------------------------------------------------- #
@@ -553,6 +602,30 @@ def open_diagnostics(parent):
         tts_row.set_action("▶  Play sample", play_sample)
         refit()
 
+    # ---- Voice input / whisper (background) ------------------------------- #
+    def run_stt_check():
+        config = _get_config()
+        stt_row.set_checking("Voice input — whisper")
+        refit()
+
+        def work():
+            return _check_stt(config)
+
+        def done(future):
+            if not alive["v"]:
+                return
+            try:
+                res = future.result()
+            except Exception as exc:
+                res = {"state": "error", "title": "Voice input check failed",
+                       "detail": str(exc)}
+            stt_row.set_result(res["state"], res["title"], res.get("detail", ""))
+            if res.get("hint"):
+                stt_row.set_hint(res["hint"])
+            refit()
+
+        mw.taskman.run_in_background(work, done)
+
     # ---- Note type fields (sync) ------------------------------------------ #
     def create_note_type():
         config = _get_config()
@@ -590,6 +663,7 @@ def open_diagnostics(parent):
     def run_all():
         run_fields_check()
         run_tts_check()
+        run_stt_check()
         run_llm_check()
 
     # Footer.

@@ -57,6 +57,18 @@ Two one-press helpers for the card editor:
   or with `edge-tts --list-voices` if you have the optional CLI.
 - `tts_speed` – playback rate; `1.25` becomes `+25%`. `tts_pitch` – `0` becomes `+0Hz`.
 - `tts_timeout` – seconds to wait per clip (default 60).
+- `whisper_path` – path to the optional `whisper-ctranslate2` CLI used by the
+  microphone ("Speak") button in the Regenerate dialog. Leave as
+  `"whisper-ctranslate2"` to auto-resolve, or set an absolute path. Voice input
+  is off until this CLI is installed (e.g. `uv tool install whisper-ctranslate2`);
+  it bundles faster-whisper and runs fully offline — no API key.
+- `whisper_model` – faster-whisper model for transcription (default `base`,
+  ~150 MB, auto-downloaded on first use). Use `small`/`medium` for higher
+  accuracy at the cost of size and speed, or `tiny` for the fastest.
+- `whisper_language` – force the spoken language, e.g. `"de"` or `"en"`. Empty =
+  auto-detect.
+- `stt_timeout` – seconds to wait for transcription (default 300). Generous
+  because the very first run also downloads the model.
 - `shortcut_*` – keyboard shortcuts.
 
 Pronunciation needs no install. You only need the LLM CLI for your chosen

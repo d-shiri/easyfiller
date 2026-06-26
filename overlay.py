@@ -30,7 +30,17 @@ animation:ga-fade .15s ease both;}
 .ga-card{display:flex;flex-direction:column;align-items:center;gap:18px;
 padding:24px 28px;border-radius:16px;background:rgba(255,255,255,.92);
 box-shadow:0 10px 34px rgba(0,0,0,.28);
+animation:ga-glow 2.6s linear infinite;
 font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}
+/* A cycling multi-colour halo around the card while work is in progress -- the
+   same spectrum as the waveform / transcribing glow, recreated in CSS since the
+   overlay is HTML, not a Qt widget. The static depth shadow rides along in each
+   keyframe so it isn't lost during the animation. */
+@keyframes ga-glow{
+0%,100%{box-shadow:0 10px 34px rgba(0,0,0,.28),0 0 28px 3px rgba(10,132,255,.6);}
+25%{box-shadow:0 10px 34px rgba(0,0,0,.28),0 0 28px 3px rgba(94,92,230,.6);}
+50%{box-shadow:0 10px 34px rgba(0,0,0,.28),0 0 28px 3px rgba(191,90,242,.6);}
+75%{box-shadow:0 10px 34px rgba(0,0,0,.28),0 0 28px 3px rgba(255,55,95,.6);}}
 .ga-stage{flex:0 0 auto;width:96px;height:96px;display:grid;
 place-items:center;overflow:visible;}
 .ga-spinner{flex:0 0 auto;}

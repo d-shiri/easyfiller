@@ -14,6 +14,8 @@ from . import llm_client
 from . import dialogs
 from . import diagnostics
 from . import overlay
+from . import recorder
+from . import stt
 from . import tts as tts_module
 from .util import audio_tag, field_index, invalid_word_reason, strip_html
 
@@ -430,19 +432,117 @@ def on_generate(editor):
     editor.call_after_note_saved(lambda: _generate_async(editor))
 
 
+def _dictate(parent, set_state, insert):
+    """Record a voice clip and transcribe it into the regenerate box.
+
+    Capture uses our animated, voice-reactive recorder (recorder.py, which wraps
+    Anki's own cross-platform audio recorder); transcription runs in the
+    background (shelling out to the whisper CLI) so the UI stays responsive. The
+    "Speak" button shows "Transcribing…" while it works, and any failure -- most
+    commonly the CLI not being installed -- surfaces in the styled error dialog
+    with the install command to copy.
+    """
+    config = get_config()
+    if not stt.available(config):
+        err = stt.missing_cli_error()
+        dialogs.show_error(
+            parent, str(err), title="Voice input needs a one-time setup", hint=err.hint
+        )
+        return
+
+    def on_recorded(path):
+        set_state("Transcribing…", True)
+
+        def work():
+            try:
+                return stt.transcribe(path, config)
+            finally:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+
+        def on_done(future):
+            set_state("", False)
+            try:
+                text = future.result()
+            except stt.STTError as exc:
+                dialogs.show_error(
+                    parent, str(exc), title="Couldn't transcribe",
+                    hint=getattr(exc, "hint", None),
+                )
+                return
+            except Exception as exc:
+                dialogs.show_error(parent, "%s" % exc, title="Couldn't transcribe")
+                return
+            insert(text)
+
+        mw.taskman.run_in_background(work, on_done)
+
+    # Our animated recorder first; if it can't start (no input device, missing
+    # QtMultimedia), fall back to Anki's stock recording dialog.
+    try:
+        recorder.record_audio(parent, on_recorded)
+    except Exception:
+        from aqt.sound import record_audio as anki_record_audio
+
+        anki_record_audio(parent, mw, False, on_recorded)
+
+
+def _regenerate_blocked(editor, note, config):
+    """Show an error and return True if there's nothing to regenerate from.
+
+    Regenerate needs a word in the source field, so we check that up front -- the
+    same conditions _generate_async would reject -- to avoid opening the prompt
+    (and letting the user dictate) only to fail afterwards. _generate_async stays
+    the authoritative backstop for the generation itself.
+    """
+    source = config.get("source_field", "Back")
+    sidx = field_index(note, source)
+    if sidx is None:
+        dialogs.show_error(
+            editor.parentWindow,
+            "Source field '%s' not found on this note type." % source,
+            title="Can't generate",
+        )
+        return True
+    word = strip_html(note.fields[sidx])
+    if not word:
+        dialogs.show_error(
+            editor.parentWindow,
+            "The '%s' field is empty -- type the word first." % source,
+            title="Nothing to generate",
+        )
+        return True
+    reason = invalid_word_reason(word)
+    if reason:
+        dialogs.show_error(
+            editor.parentWindow, reason, title="That doesn't look like a word"
+        )
+        return True
+    return False
+
+
 def on_regenerate(editor):
     """Ask for optional guidance, then overwrite the examples with fresh ones.
 
-    The prompt is shown first; a cancel leaves the note untouched. An empty
-    instruction is valid (it just means "different examples"), so we only abort
-    on None (the dialog was dismissed).
+    We save the note first and check the source field before showing anything: if
+    there's no word to regenerate from, the "Nothing to generate" error appears
+    straight away instead of after the prompt. Otherwise the prompt is shown; a
+    cancel leaves the note untouched, and an empty instruction is valid (it just
+    means "different examples"), so we only abort on None (the dialog was
+    dismissed).
     """
-    instruction = dialogs.ask_instruction(editor.parentWindow)
-    if instruction is None:
-        return
-    editor.call_after_note_saved(
-        lambda: _generate_async(editor, regenerate=True, instruction=instruction)
-    )
+    def proceed():
+        config = get_config()
+        if _regenerate_blocked(editor, editor.note, config):
+            return
+        instruction = dialogs.ask_instruction(editor.parentWindow, dictate=_dictate)
+        if instruction is None:
+            return
+        _generate_async(editor, regenerate=True, instruction=instruction)
+
+    editor.call_after_note_saved(proceed)
 
 
 def on_pronounce(editor):

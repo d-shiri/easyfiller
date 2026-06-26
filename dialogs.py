@@ -31,13 +31,17 @@ from aqt.qt import (
     QShortcut,
     QSize,
     Qt,
+    QTextCursor,
     QTimer,
     QVBoxLayout,
     QWidget,
 )
 from aqt.theme import theme_manager
 
-_COPY_ICON = os.path.join(os.path.dirname(__file__), "assets", "icons", "copy.png")
+_ICON_DIR = os.path.join(os.path.dirname(__file__), "assets", "icons")
+_COPY_ICON = os.path.join(_ICON_DIR, "copy.png")
+_MIC_ICON = os.path.join(_ICON_DIR, "pronounce.png")
+_CLEAR_ICON = os.path.join(_ICON_DIR, "clear.png")
 
 
 class _Dialog(QDialog):
@@ -213,6 +217,47 @@ class _CopyButton(QPushButton):
         QTimer.singleShot(1100, lambda: self.setText(self._value))
 
 
+class SpectrumGlow:
+    """An animated, multi-colour halo you can switch on around any Qt widget to
+    signal it's busy/working.
+
+    It's a zero-offset QGraphicsDropShadowEffect (so it reads as a glow, not a
+    shadow) whose colour a timer sweeps around the HSV hue wheel. Call start() to
+    begin and stop() to clear it; a fresh effect is built each start() and dropped
+    on stop(), so the widget has no effect at rest.
+    """
+
+    def __init__(self, widget, blur=26, parent=None):
+        self._widget = widget
+        self._blur = blur
+        self._hue = 0.0
+        self._eff = None
+        self._timer = QTimer(parent or widget)
+        self._timer.timeout.connect(self._tick)
+
+    def _tick(self):
+        if self._eff is None:
+            return
+        self._hue = (self._hue + 8) % 360
+        col = QColor.fromHsv(int(self._hue), 240, 255)
+        col.setAlpha(235)
+        self._eff.setColor(col)
+
+    def start(self):
+        eff = QGraphicsDropShadowEffect(self._widget)
+        eff.setBlurRadius(self._blur)
+        eff.setOffset(0, 0)
+        self._widget.setGraphicsEffect(eff)
+        self._eff = eff
+        self._hue = 0.0
+        self._timer.start(40)
+
+    def stop(self):
+        self._timer.stop()
+        self._eff = None
+        self._widget.setGraphicsEffect(None)  # deletes the effect; rebuilt next start()
+
+
 def _palette(night):
     if night:
         return {
@@ -319,15 +364,25 @@ def confirm_duplicate(parent, word, decks, count=1):
     return result["choice"]
 
 
-def ask_instruction(parent):
+def ask_instruction(parent, dictate=None):
     """Prompt for optional free-text guidance before regenerating examples.
 
     Returns the typed text (possibly an empty string when the user just hits
     Regenerate without typing) or None if the dialog was cancelled. Ctrl+Enter
     submits without leaving the text box. Same styled card as the other dialogs.
+
+    `dictate`, when given, adds a "Speak" button that lets the user dictate the
+    instruction by voice. It is a callback `dictate(parent, set_state, insert)`:
+    `set_state(label, busy)` updates the button while transcription runs
+    (restoring it when `busy` is False), and `insert(text)` appends the
+    recognized text to the box. The whole record/transcribe flow lives in the
+    caller; this dialog just owns the button and the text box.
     """
     c = _palette(theme_manager.night_mode)
     dlg, card, lay = _make_card(parent, c)
+    # A touch wider than the default card so the voice/clear buttons and the
+    # "Transcribing…" status all sit comfortably on one row.
+    card.setMinimumWidth(440)
 
     head = QHBoxLayout()
     head.setSpacing(12)
@@ -366,7 +421,73 @@ def ask_instruction(parent):
     for seq in ("Ctrl+Return", "Ctrl+Enter"):
         QShortcut(QKeySequence(seq), dlg, activated=submit)
 
+    # Voice-input controls share the main button row, icon-only to stay compact:
+    #   [mic] [trash]            [Cancel] [Regenerate]
     btns = QHBoxLayout()
+    btns.setSpacing(10)
+
+    if dictate is not None:
+        # Liveness guard: a background transcription that finishes after the
+        # dialog has closed must not poke deleted widgets.
+        alive = {"v": True}
+        dlg.finished.connect(lambda *_: alive.update(v=False))
+
+        mic = QPushButton()
+        mic.setObjectName("gaBtn")
+        mic.setIcon(QIcon(_MIC_ICON))
+        mic.setIconSize(QSize(18, 18))
+        mic.setCursor(Qt.CursorShape.PointingHandCursor)
+        mic.setAutoDefault(False)
+        mic.setToolTip("Dictate your instructions by voice")
+
+        clear = QPushButton()
+        clear.setObjectName("gaBtn")
+        clear.setIcon(QIcon(_CLEAR_ICON))
+        clear.setIconSize(QSize(18, 18))
+        clear.setCursor(Qt.CursorShape.PointingHandCursor)
+        clear.setAutoDefault(False)
+        clear.setToolTip("Clear the instructions")
+
+        # While transcribing we swap the mic + clear buttons for a single,
+        # text-only "Transcribing…" button so the state is spelled out (not just
+        # implied by a colour). It carries a soft halo that cycles through the
+        # spectrum to read as "working".
+        transcribing = QPushButton("Transcribing…")
+        transcribing.setObjectName("gaBtn")
+        transcribing.setAutoDefault(False)
+        transcribing.setVisible(False)
+        glow = SpectrumGlow(transcribing, parent=dlg)
+
+        def set_state(label, busy):
+            if not alive["v"]:
+                return
+            mic.setVisible(not busy)
+            clear.setVisible(not busy)
+            transcribing.setText(label or "Transcribing…")
+            transcribing.setVisible(busy)
+            if busy:
+                glow.start()
+            else:
+                glow.stop()
+
+        def insert(text):
+            if not alive["v"] or not text:
+                return
+            current = box.toPlainText().strip()
+            box.setPlainText((current + " " + text) if current else text)
+            box.moveCursor(QTextCursor.MoveOperation.End)
+            box.setFocus()
+
+        def clear_box():
+            box.clear()
+            box.setFocus()
+
+        mic.clicked.connect(lambda: dictate(dlg, set_state, insert))
+        clear.clicked.connect(clear_box)
+        btns.addWidget(mic)
+        btns.addWidget(clear)
+        btns.addWidget(transcribing)
+
     btns.addStretch(1)
     cancel = QPushButton("Cancel")
     cancel.setObjectName("gaBtn")
