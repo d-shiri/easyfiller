@@ -66,7 +66,9 @@ Two one-press helpers for the card editor:
   ~150 MB, auto-downloaded on first use). Use `small`/`medium` for higher
   accuracy at the cost of size and speed, or `tiny` for the fastest.
 - `whisper_language` – force the spoken language, e.g. `"de"` or `"en"`. Empty =
-  auto-detect.
+  auto-detect (the default). Pinning a language skips Whisper's detection pass
+  (~0.5–0.8s faster per transcription), but the saving was small so the in-dialog
+  picker is disabled; set this here if you want it.
 - `stt_timeout` – seconds to wait for transcription (default 300). Generous
   because the very first run also downloads the model.
 - `shortcut_*` – keyboard shortcuts.

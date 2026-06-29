@@ -537,10 +537,28 @@ def on_regenerate(editor):
         config = get_config()
         if _regenerate_blocked(editor, editor.note, config):
             return
+
+        # Dictation language picker disabled (pinning only saved ~0.5-0.8s and added
+        # UI noise); transcription just auto-detects. To bring the picker back, also
+        # re-enable the commented block in dialogs.ask_instruction and pass
+        # lang=config.get("whisper_language", "") + on_lang=set_language here:
+        # def set_language(code):
+        #     cfg = get_config()
+        #     cfg["whisper_language"] = code
+        #     mw.addonManager.writeConfig(__name__, cfg)
         instruction = dialogs.ask_instruction(editor.parentWindow, dictate=_dictate)
         if instruction is None:
             return
-        _generate_async(editor, regenerate=True, instruction=instruction)
+        # Regenerate overwrites the German example fields wholesale, dropping any
+        # old [sound:...] tag with them, so the audio left on the card no longer
+        # matches the new sentence. Chain pronunciation (same as the "both" flow)
+        # to synthesize fresh clips for the new examples.
+        _generate_async(
+            editor,
+            regenerate=True,
+            instruction=instruction,
+            then=lambda: tts_module.pronounce(editor, get_config()),
+        )
 
     editor.call_after_note_saved(proceed)
 

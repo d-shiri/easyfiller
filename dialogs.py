@@ -22,6 +22,7 @@ from aqt.qt import (
     QKeySequence,
     QLabel,
     QLayout,
+    # QMenu,  # re-enable with the dictation language picker (see ask_instruction)
     QPainter,
     QPixmap,
     QPlainTextEdit,
@@ -42,6 +43,51 @@ _ICON_DIR = os.path.join(os.path.dirname(__file__), "assets", "icons")
 _COPY_ICON = os.path.join(_ICON_DIR, "copy.png")
 _MIC_ICON = os.path.join(_ICON_DIR, "pronounce.png")
 _CLEAR_ICON = os.path.join(_ICON_DIR, "clear.png")
+
+# --- Dictation language picker (DISABLED) -------------------------------------
+# Pinning the Whisper language only saved ~0.5-0.8s per transcription and added UI
+# noise, so the picker is turned off and dictation just auto-detects. Everything is
+# kept (commented) so it's a one-step revival: uncomment this block, the button
+# block in ask_instruction(), and the wiring in __init__.py on_regenerate().
+#
+# _STT_LANGUAGES = (
+#     ("English", "en"),
+#     ("Auto-detect (slower)", ""),
+#     ("Arabic", "ar"),
+#     ("Chinese", "zh"),
+#     ("Czech", "cs"),
+#     ("Danish", "da"),
+#     ("Dutch", "nl"),
+#     ("Finnish", "fi"),
+#     ("French", "fr"),
+#     ("German", "de"),
+#     ("Greek", "el"),
+#     ("Hebrew", "he"),
+#     ("Hindi", "hi"),
+#     ("Hungarian", "hu"),
+#     ("Indonesian", "id"),
+#     ("Italian", "it"),
+#     ("Japanese", "ja"),
+#     ("Korean", "ko"),
+#     ("Norwegian", "no"),
+#     ("Persian", "fa"),
+#     ("Polish", "pl"),
+#     ("Portuguese", "pt"),
+#     ("Romanian", "ro"),
+#     ("Russian", "ru"),
+#     ("Spanish", "es"),
+#     ("Swedish", "sv"),
+#     ("Turkish", "tr"),
+#     ("Ukrainian", "uk"),
+#     ("Urdu", "ur"),
+#     ("Vietnamese", "vi"),
+# )
+#
+#
+# def _stt_lang_button_text(code):
+#     """Short label shown on the picker button ("Auto" / "EN" / "FA" / ...)."""
+#     return (code or "").upper() or "Auto"
+# ------------------------------------------------------------------------------
 
 
 class _Dialog(QDialog):
@@ -364,7 +410,7 @@ def confirm_duplicate(parent, word, decks, count=1):
     return result["choice"]
 
 
-def ask_instruction(parent, dictate=None):
+def ask_instruction(parent, dictate=None, lang=None, on_lang=None):
     """Prompt for optional free-text guidance before regenerating examples.
 
     Returns the typed text (possibly an empty string when the user just hits
@@ -377,6 +423,10 @@ def ask_instruction(parent, dictate=None):
     (restoring it when `busy` is False), and `insert(text)` appends the
     recognized text to the box. The whole record/transcribe flow lives in the
     caller; this dialog just owns the button and the text box.
+
+    `lang` is the current dictation language code ("" = auto-detect) and `on_lang`
+    persists a newly chosen one; together they back the language picker shown next
+    to the mic. Pinning a language skips Whisper's detection pass (faster).
     """
     c = _palette(theme_manager.night_mode)
     dlg, card, lay = _make_card(parent, c)
@@ -463,6 +513,7 @@ def ask_instruction(parent, dictate=None):
                 return
             mic.setVisible(not busy)
             clear.setVisible(not busy)
+            # lang_btn.setVisible(not busy)  # re-enable with the language picker
             transcribing.setText(label or "Transcribing…")
             transcribing.setVisible(busy)
             if busy:
@@ -482,10 +533,39 @@ def ask_instruction(parent, dictate=None):
             box.clear()
             box.setFocus()
 
+        # Language picker (DISABLED — see the _STT_LANGUAGES note near the top of
+        # this file). Uncomment this block, the addWidget(lang_btn) line below, the
+        # lang_btn.setVisible line in set_state, the QMenu import, and the on_lang
+        # wiring in __init__.py to bring it back.
+        # lang_state = {"code": lang or ""}
+        # lang_btn = QPushButton(_stt_lang_button_text(lang_state["code"]))
+        # lang_btn.setObjectName("gaBtn")
+        # lang_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        # lang_btn.setAutoDefault(False)
+        # lang_btn.setToolTip("Dictation language — pin one for faster transcription")
+        #
+        # def choose_lang(code):
+        #     lang_state["code"] = code
+        #     lang_btn.setText(_stt_lang_button_text(code))
+        #     if on_lang is not None:
+        #         on_lang(code)
+        #
+        # def show_lang_menu():
+        #     menu = QMenu(dlg)
+        #     for label, code in _STT_LANGUAGES:
+        #         act = menu.addAction(label)
+        #         act.setCheckable(True)
+        #         act.setChecked(code == lang_state["code"])
+        #         act.triggered.connect(lambda _checked, c=code: choose_lang(c))
+        #     menu.exec(lang_btn.mapToGlobal(lang_btn.rect().bottomLeft()))
+        #
+        # lang_btn.clicked.connect(show_lang_menu)
+
         mic.clicked.connect(lambda: dictate(dlg, set_state, insert))
         clear.clicked.connect(clear_box)
         btns.addWidget(mic)
         btns.addWidget(clear)
+        # btns.addWidget(lang_btn)  # re-enable with the language picker
         btns.addWidget(transcribing)
 
     btns.addStretch(1)
