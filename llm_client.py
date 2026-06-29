@@ -347,7 +347,7 @@ def translate(sentences, config):
     return [str(x) for x in data]
 
 
-def generate(word, config, avoid=None, instruction=None):
+def generate(word, config, avoid=None, instruction=None, current=None):
     """Return {"meaning": str, "examples": [{"de","en"}, {"de","en"}]}.
 
     The built-in prompt also returns "canonical" (the dictionary citation form);
@@ -357,37 +357,83 @@ def generate(word, config, avoid=None, instruction=None):
     write different ones (otherwise it returns the same "canonical" example for a
     given word every time). `instruction` is optional free text from the user (e.g.
     "use the word Reise", "make them about cooking") appended to steer the example
-    sentences; it never overrides the required JSON shape. Raises
-    RuntimeError/ValueError on failure.
+    sentences; it never overrides the required JSON shape.
+
+    `current` is the card's example sentences in field order. When given together
+    with `instruction` (the regenerate-with-a-voice/text-command flow) we show the
+    model the numbered current sentences and tell it to honor the instruction
+    literally -- so "only change the first sentence" keeps the second verbatim
+    instead of replacing both. Raises RuntimeError/ValueError on failure.
     """
     # A custom prompt (advanced) must keep the "{word}" placeholder and still ask
     # for the same JSON shape; use .replace so its literal braces don't break.
     # llm_prompt is the provider-neutral key; fall back to the old claude_prompt.
     custom = config.get("llm_prompt") or config.get("claude_prompt")
     prompt = custom.replace("{word}", word) if custom else PROMPT_TEMPLATE.format(word=word)
-    if avoid:
-        prompt += (
-            "\nThese example sentences are already used -- do NOT repeat or "
-            "paraphrase them, write clearly different ones:\n- "
-            + "\n- ".join(avoid)
+    # Targeted only when there's at least one real sentence to anchor a positional
+    # instruction to; an all-blank `current` falls through to the normal path.
+    targeted = bool(
+        instruction and instruction.strip()
+        and current and any(s.strip() for s in current)
+    )
+    if targeted:
+        # Give the model the current sentences as numbered, ordered content so a
+        # positional instruction has something to anchor to, and require it to
+        # return EVERY position -- copying unchanged ones verbatim. The write-back
+        # is positional (examples[i] -> example_fields[i]), so a verbatim copy is
+        # what "leave that one alone" means, and one example per position keeps the
+        # two halves aligned.
+        numbered = "\n".join(
+            "%d. %s" % (i, s.strip() or "(currently empty)")
+            for i, s in enumerate(current, 1)
         )
-    if instruction and instruction.strip():
         prompt += (
-            "\nAdditional instructions from the user for the example sentences -- "
-            "follow them, but keep the exact JSON shape required above:\n"
+            "\nThe card currently has these example sentences, by position:\n"
+            + numbered
+            + "\nApply this instruction from the user, taking it literally and "
+            "changing ONLY what it asks for:\n"
             + instruction.strip()
+            + "\nReturn exactly %d example objects, one per position above, in the "
+            "same order. For any position the instruction does not ask you to "
+            "change, copy that sentence back EXACTLY as it is now (same German, "
+            "same English translation). For a position marked (currently empty), "
+            "write a fresh natural example sentence." % len(current)
         )
+    else:
+        if avoid:
+            prompt += (
+                "\nThese example sentences are already used -- do NOT repeat or "
+                "paraphrase them, write clearly different ones:\n- "
+                + "\n- ".join(avoid)
+            )
+        if instruction and instruction.strip():
+            prompt += (
+                "\nAdditional instructions from the user for the example sentences -- "
+                "follow them, but keep the exact JSON shape required above:\n"
+                + instruction.strip()
+            )
     # A random token nudges the model off its deterministic default so repeated
     # regenerations actually differ. Output instructions above forbid echoing it.
+    # In a targeted edit we scope the nudge to NEW sentences so it doesn't fight
+    # the rule to copy kept sentences verbatim.
     nonce = "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
-    prompt += "\n(Variety token %s: vary your sentence choices; never output it.)" % nonce
+    if targeted:
+        prompt += (
+            "\n(Variety token %s: when you write a NEW sentence, vary your choice; "
+            "leave kept sentences exactly as given. Never output this token.)" % nonce
+        )
+    else:
+        prompt += "\n(Variety token %s: vary your sentence choices; never output it.)" % nonce
     # fmt="json" makes Ollama emit a syntactically valid JSON object (Claude ignores it).
     data = _extract_json(_run_llm(prompt, config, fmt="json"))
+    # Default fill expects the template's two examples; a targeted edit returns one
+    # per position shown, so require exactly that many (never below one).
+    need = max(1, len(current)) if targeted else 2
     if (
         not isinstance(data, dict)
         or "meaning" not in data
         or not isinstance(data.get("examples"), list)
-        or len(data["examples"]) < 2
+        or len(data["examples"]) < need
     ):
         raise ValueError("Model returned unexpected JSON: " + json.dumps(data)[:500])
     return data

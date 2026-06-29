@@ -205,11 +205,15 @@ def _generate_async(editor, then=None, regenerate=False, instruction=None):
     # example-field index so we can write back to the matching translation field.
     to_translate = {}
     avoid = []
+    # Existing example text per example-field position, blank where the field is
+    # empty or missing. Unlike `avoid` (filled sentences only) this stays aligned
+    # with `de_fields`, so a positional instruction ("change the first sentence")
+    # maps to the same index the write-back uses.
+    current = []
     for i, fname in enumerate(de_fields):
         idx = field_index(note, fname)
-        if idx is None:
-            continue
-        existing = strip_html(note.fields[idx])
+        existing = strip_html(note.fields[idx]) if idx is not None else ""
+        current.append(existing)
         if not existing:
             continue
         # Sentences already on the card, so Claude writes new ones instead of
@@ -283,8 +287,13 @@ def _generate_async(editor, then=None, regenerate=False, instruction=None):
         result = {"data": None, "translations": {}}
 
         def do_generate():
+            # In regenerate mode, hand the current sentences to the model (as
+            # `current`) so a targeted instruction like "only change the first
+            # sentence" can keep the others verbatim. In fill mode they're just
+            # things to avoid repeating.
             result["data"] = llm_client.generate(
-                word, config, avoid=avoid, instruction=instruction
+                word, config, avoid=avoid, instruction=instruction,
+                current=current if regenerate else None,
             )
             on_main(lambda: overlay.set_step(editor, "gen", state="done"))
 
