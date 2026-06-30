@@ -261,19 +261,40 @@ def pronounce(editor, config):
             )
             return
         note = editor.note
-        for idx, path in results:
-            try:
-                filename = mw.col.media.add_file(path)
-            except AttributeError:  # older API name
-                filename = mw.col.media.addFile(path)
-            finally:
+        added = 0
+        try:
+            for idx, path in results:
+                try:
+                    try:
+                        filename = mw.col.media.add_file(path)
+                    except AttributeError:  # older API name
+                        filename = mw.col.media.addFile(path)
+                finally:
+                    if os.path.exists(path):
+                        os.remove(path)
+                tag = "[sound:%s]" % filename
+                note.fields[idx] = (note.fields[idx] + " " + tag).strip()
+                added += 1
+        except Exception as exc:
+            # A media-store failure must still write back the clips that landed,
+            # tear down the overlay, and surface the error -- never leave the
+            # spinner up with a half-applied note and no feedback.
+            if added:
+                editor.set_note(note)
+            # Drop any temp files for clips we never got to.
+            for _, path in results:
                 if os.path.exists(path):
                     os.remove(path)
-            tag = "[sound:%s]" % filename
-            note.fields[idx] = (note.fields[idx] + " " + tag).strip()
+            overlay.set_step(editor, "tts", state="error")
+            overlay.hide(editor)
+            dialogs.show_error(
+                editor.parentWindow, "Couldn't save the pronunciation audio: %s" % exc,
+                title="Pronunciation failed",
+            )
+            return
         editor.set_note(note)
         overlay.set_step(editor, "tts", label=_progress_msg(total, total), state="done")
         overlay.hide(editor)
-        tooltip("Added %d pronunciation clip(s)." % len(results))
+        tooltip("Added %d pronunciation clip(s)." % added)
 
     mw.taskman.run_in_background(task, on_done)

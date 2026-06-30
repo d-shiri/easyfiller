@@ -290,7 +290,10 @@ def synthesize(voice, rate, pitch, text, timeout=60, volume="+0%"):
                 if header_length > len(msg):
                     raise EdgeTTSError("Malformed audio frame from TTS service.")
                 if _parse_path(msg[2:header_length]) == b"audio":
-                    audio += msg[header_length + 2:]
+                    # header_length is the offset at which the audio bytes start
+                    # (it counts the 2-byte prefix), so the audio is everything
+                    # from there on -- matching edge-tts' get_headers_and_data.
+                    audio += msg[header_length:]
     finally:
         ws.close()
 

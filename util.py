@@ -9,6 +9,10 @@ import unicodedata
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _SOUND_RE = re.compile(r"\[sound:[^\]]+\]")
+# Break/block-level tags become a space so text on either side of them stays
+# separated (otherwise "Hello</div><div>World" -> "HelloWorld"). Matched in any
+# form (<br>, <br/>, <br />, </p>, <li ...>) before the blanket tag strip below.
+_BREAK_RE = re.compile(r"</?(?:br|div|p|li|tr|h[1-6])\b[^>]*>", re.IGNORECASE)
 
 # --------------------------------------------------------------------------- #
 # Cross-platform process / executable helpers                                 #
@@ -117,7 +121,8 @@ def strip_html(text):
     if not text:
         return ""
     text = _SOUND_RE.sub("", text)
-    text = text.replace("&nbsp;", " ").replace("<br>", " ").replace("<br/>", " ")
+    text = text.replace("&nbsp;", " ")
+    text = _BREAK_RE.sub(" ", text)
     text = _TAG_RE.sub("", text)
     text = html.unescape(text)
     return " ".join(text.split()).strip()
