@@ -11,6 +11,7 @@ error (red). Callers build the list with start() and advance it with set_step().
 """
 
 import json
+import random
 
 from aqt import mw
 
@@ -251,10 +252,7 @@ def _ensure(editor):
         return None
     _suppress_anki_progress()
     if not _shown:
-        from . import get_config
-
-        name = get_config().get("loader", loaders.DEFAULT)
-        web.eval(_SHOW_JS % json.dumps(_BASE_CSS + loaders.get_css(name)))
+        web.eval(_SHOW_JS % json.dumps(_BASE_CSS + random.choice(loaders.LOADERS)))
         _shown = True
     return web
 
@@ -322,10 +320,14 @@ def set_progress(editor, value):
 def set_step(editor, key, label=None, state=None):
     """Update an existing step's label and/or state, creating it if missing.
 
-    Creating on demand lets a standalone phase (e.g. pronounce on its own) open
-    the overlay with just its step, while the combined flow updates a step that
-    start() already placed.
+    Updates the step that start() already placed. Once the overlay has been
+    hidden or cancelled (`_shown` is False), stale updates from still-running
+    background work are ignored rather than re-injecting a ghost overlay that
+    would never be torn down -- every caller opens the overlay with start()
+    first, so there is nothing to create here.
     """
+    if not _shown:
+        return
     found = next((s for s in _steps if s[0] == key), None)
     if found is None:
         found = [key, label or key, state or "active"]
@@ -335,8 +337,7 @@ def set_step(editor, key, label=None, state=None):
             found[1] = label
         if state is not None:
             found[2] = state
-    if _ensure(editor):
-        _render(editor)
+    _render(editor)
 
 
 def hide(editor):

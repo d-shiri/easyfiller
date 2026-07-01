@@ -1,68 +1,15 @@
-"""CSS loading animations for the editor overlay.
+"""CSS loading animations for the editor overlay; one is picked at random.
 
-`LOADERS` maps a short name -> a CSS string that styles the single spinner
-element `.ga-spinner` (rename any source `.loader` selector to `.ga-spinner`).
-Keep every `@keyframes` name unique across entries (prefix with `ga-`) so
-injected styles never clash. The name is what users put in the `loader` config
-key; `DEFAULT` is used when the key is unset, and `"random"` (or any unknown
-name) picks one at random.
+Each entry is a CSS string that styles the single spinner element `.ga-spinner`
+(rename any source `.loader` selector to `.ga-spinner`). Keep every `@keyframes`
+name unique across entries (prefix with `ga-`) so injected styles never clash.
 
-To add one: paste a new `"name": triple-quoted CSS string` entry into LOADERS.
+To add one: paste a new triple-quoted CSS string into LOADERS.
 """
 
-import random
-
-DEFAULT = "mario"
-
-LOADERS = {
-    # --- Mario jumping to headbutt a "?" block (pixel-art sprite via
-    # box-shadow; his head meets the block at the top of each jump) ---
-    "mario": """
-.ga-spinner{
-  width:120px;
-  height:150px;
-  position:relative;
-  display:block;
-  margin:auto;}
-.ga-spinner::before{
-  content:"?";
-  position:absolute;
-  top:0;
-  left:calc(50% - 22px);
-  width:44px;
-  height:44px;
-  box-sizing:border-box;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  font:bold 26px/1 monospace;
-  color:#fff3c4;
-  text-shadow:1px 1px 0 #8a5a12;
-  background:linear-gradient(#f6c445,#e08e1a);
-  border:4px solid #7a4a12;
-  border-radius:6px;
-  box-shadow:inset 0 0 0 2px #ffe08a;
-  animation:ga-mario-block 1.1s infinite;}
-.ga-spinner::after{
-  content:"";
-  position:absolute;
-  top:75px;
-  left:30px;
-  width:5px;
-  height:5px;
-  background:transparent;
-  box-shadow:20px 0px 0 0 #e52521,25px 0px 0 0 #e52521,30px 0px 0 0 #e52521,35px 0px 0 0 #e52521,15px 5px 0 0 #e52521,20px 5px 0 0 #e52521,25px 5px 0 0 #e52521,30px 5px 0 0 #e52521,35px 5px 0 0 #e52521,40px 5px 0 0 #e52521,45px 5px 0 0 #e52521,15px 10px 0 0 #5a2c00,20px 10px 0 0 #5a2c00,25px 10px 0 0 #5a2c00,30px 10px 0 0 #ffc08a,35px 10px 0 0 #ffc08a,40px 10px 0 0 #5a2c00,45px 10px 0 0 #ffc08a,10px 15px 0 0 #5a2c00,15px 15px 0 0 #ffc08a,20px 15px 0 0 #5a2c00,25px 15px 0 0 #ffc08a,30px 15px 0 0 #ffc08a,35px 15px 0 0 #ffc08a,40px 15px 0 0 #5a2c00,45px 15px 0 0 #ffc08a,50px 15px 0 0 #ffc08a,55px 15px 0 0 #ffc08a,10px 20px 0 0 #5a2c00,15px 20px 0 0 #ffc08a,20px 20px 0 0 #5a2c00,25px 20px 0 0 #5a2c00,30px 20px 0 0 #ffc08a,35px 20px 0 0 #ffc08a,40px 20px 0 0 #ffc08a,45px 20px 0 0 #5a2c00,50px 20px 0 0 #ffc08a,55px 20px 0 0 #ffc08a,10px 25px 0 0 #5a2c00,15px 25px 0 0 #5a2c00,20px 25px 0 0 #ffc08a,25px 25px 0 0 #ffc08a,30px 25px 0 0 #ffc08a,35px 25px 0 0 #ffc08a,40px 25px 0 0 #5a2c00,45px 25px 0 0 #5a2c00,50px 25px 0 0 #5a2c00,55px 25px 0 0 #5a2c00,20px 30px 0 0 #ffc08a,25px 30px 0 0 #ffc08a,30px 30px 0 0 #ffc08a,35px 30px 0 0 #ffc08a,40px 30px 0 0 #ffc08a,15px 35px 0 0 #e52521,20px 35px 0 0 #e52521,25px 35px 0 0 #2038c0,30px 35px 0 0 #2038c0,35px 35px 0 0 #e52521,40px 35px 0 0 #e52521,10px 40px 0 0 #e52521,15px 40px 0 0 #e52521,20px 40px 0 0 #e52521,25px 40px 0 0 #2038c0,30px 40px 0 0 #2038c0,35px 40px 0 0 #e52521,40px 40px 0 0 #e52521,45px 40px 0 0 #2038c0,50px 40px 0 0 #e52521,55px 40px 0 0 #e52521,5px 45px 0 0 #e52521,10px 45px 0 0 #e52521,15px 45px 0 0 #e52521,20px 45px 0 0 #e52521,25px 45px 0 0 #2038c0,30px 45px 0 0 #2038c0,35px 45px 0 0 #2038c0,40px 45px 0 0 #2038c0,45px 45px 0 0 #e52521,50px 45px 0 0 #e52521,55px 45px 0 0 #e52521,0px 50px 0 0 #ffc08a,5px 50px 0 0 #ffc08a,10px 50px 0 0 #e52521,15px 50px 0 0 #e52521,20px 50px 0 0 #2038c0,25px 50px 0 0 #2038c0,30px 50px 0 0 #ffc08a,35px 50px 0 0 #ffc08a,40px 50px 0 0 #2038c0,45px 50px 0 0 #2038c0,50px 50px 0 0 #e52521,55px 50px 0 0 #ffc08a,0px 55px 0 0 #ffc08a,5px 55px 0 0 #ffc08a,10px 55px 0 0 #2038c0,15px 55px 0 0 #2038c0,20px 55px 0 0 #2038c0,25px 55px 0 0 #2038c0,30px 55px 0 0 #2038c0,35px 55px 0 0 #2038c0,40px 55px 0 0 #2038c0,45px 55px 0 0 #2038c0,50px 55px 0 0 #ffc08a,55px 55px 0 0 #ffc08a,10px 60px 0 0 #2038c0,15px 60px 0 0 #2038c0,20px 60px 0 0 #2038c0,35px 60px 0 0 #2038c0,40px 60px 0 0 #2038c0,45px 60px 0 0 #2038c0,5px 65px 0 0 #5a2c00,10px 65px 0 0 #5a2c00,15px 65px 0 0 #5a2c00,40px 65px 0 0 #5a2c00,45px 65px 0 0 #5a2c00,50px 65px 0 0 #5a2c00,0px 70px 0 0 #5a2c00,5px 70px 0 0 #5a2c00,10px 70px 0 0 #5a2c00,15px 70px 0 0 #5a2c00,40px 70px 0 0 #5a2c00,45px 70px 0 0 #5a2c00,50px 70px 0 0 #5a2c00,55px 70px 0 0 #5a2c00;
-  animation:ga-mario-jump 1.1s infinite;}
-@keyframes ga-mario-jump{
-  0%,55%,100%{transform:translateY(0)}
-  30%{transform:translateY(-39px)}}
-@keyframes ga-mario-block{
-  0%,24%,36%,100%{transform:translateY(0)}
-  30%{transform:translateY(-8px)}}
-""",
-
+LOADERS = [
     # --- rolling dots (css-loaders l9) ---
-    "rolling-dots": """
+    """
 .ga-spinner{
   --r1:154%;
   --r2:68.5%;
@@ -85,7 +32,7 @@ LOADERS = {
 """,
 
     # --- writing pen (css-loaders l16) ---
-    "writing-pen": """
+    """
 .ga-spinner{
   width:20px;
   height:80px;
@@ -123,7 +70,7 @@ LOADERS = {
 """,
 
     # --- clouds drifting (css-loaders l10) ---
-    "clouds": """
+    """
 .ga-spinner{
   width:80px;
   height:40px;
@@ -157,7 +104,7 @@ LOADERS = {
 """,
 
     # --- "Loading" + rocket liftoff (css-loaders l10 text variant) ---
-    "rocket": """
+    """
 .ga-spinner{
   width:fit-content;
   font-size:17px;
@@ -210,7 +157,7 @@ LOADERS = {
 """,
 
     # --- flipping arrow halves (css-loaders l13) ---
-    "arrows": """
+    """
 .ga-spinner{
   width:60px;
   aspect-ratio:1;
@@ -242,7 +189,7 @@ LOADERS = {
 """,
 
     # --- nested gears (css-loaders l3) ---
-    "gears": """
+    """
 .ga-spinner{
   display:inline-grid;
   width:80px;
@@ -270,7 +217,7 @@ LOADERS = {
 """,
 
     # --- orbiting dots between poles (css-loaders l49) ---
-    "orbit-dots": """
+    """
 .ga-spinner{
   height:15px;
   aspect-ratio:4;
@@ -301,7 +248,7 @@ LOADERS = {
 """,
 
     # --- orbiting planets (css-loaders l17) ---
-    "planets": """
+    """
 .ga-spinner{
   width:70px;
   aspect-ratio:1;
@@ -328,7 +275,7 @@ LOADERS = {
 """,
 
     # --- steaming cup (css-loaders) ---
-    "coffee": """
+    """
 .ga-spinner {
   width: 24px;
   height: 80px;
@@ -399,7 +346,7 @@ LOADERS = {
 """,
 
     # --- balancing seesaw (css-loaders) ---
-    "seesaw": """
+    """
 .ga-spinner{
   display: block;
   position: relative;
@@ -444,7 +391,7 @@ LOADERS = {
 """,
 
     # --- magnifying glass loupe (css-loaders) ---
-    "magnifier": """
+    """
 .ga-spinner {
   position: relative;
   width: 120px;
@@ -491,7 +438,7 @@ LOADERS = {
 """,
 
     # --- crossed spinning axes (css-loaders) ---
-    "axes": """
+    """
 .ga-spinner {
   position: relative;
   width: 164px;
@@ -543,7 +490,7 @@ LOADERS = {
 """,
 
     # --- frying pan + egg (css-loaders) ---
-    "frying-egg": """
+    """
 .ga-spinner {
   width: 100px;
   height: 100px;
@@ -602,7 +549,7 @@ LOADERS = {
 """,
 
     # --- pan tossing egg (css-loaders) ---
-    "pan-toss": """
+    """
 .ga-spinner {
   position: relative;
   width: 120px;
@@ -663,7 +610,7 @@ LOADERS = {
 """,
 
     # --- cassette tape (css-loaders) ---
-    "cassette": """
+    """
 .ga-spinner {
   margin: auto;
   width: 100px;
@@ -708,16 +655,4 @@ LOADERS = {
   }
 }
 """,
-}
-
-
-def get_css(name=None):
-    """Return the CSS for the named loader.
-
-    Falls back to a random loader when `name` is empty, "random", or not a
-    known key, so a typo in the config never breaks the overlay.
-    """
-    css = LOADERS.get(name)
-    if css is None:
-        css = random.choice(list(LOADERS.values()))
-    return css
+]
