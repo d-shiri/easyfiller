@@ -30,6 +30,12 @@ Two one-press helpers for the card editor:
   (`studiert` → `studieren`), and at least one example still uses the form you typed.
   Set `false` to leave the field exactly as entered. Note: a custom `llm_prompt`
   must include the `canonical` field for this to take effect.
+- `loader` – which loading animation shows while a card is being filled
+  (default `mario`, a Mario who jumps up and headbutts a “?” block). Other names:
+  `rolling-dots`, `writing-pen`, `clouds`, `rocket`, `arrows`, `gears`,
+  `orbit-dots`, `planets`, `coffee`, `seesaw`, `magnifier`, `axes`, `frying-egg`,
+  `pan-toss`, `cassette`. Use `random` (or any unknown name) to get a random one
+  each time.
 - `provider` – which local LLM CLI to use: `"claude"` (default) or `"ollama"`. Each
   provider reads its own `*_path` / `*_model` keys below.
 - `claude_path` – path to the `claude` CLI. Leave as `"claude"` to auto-resolve, or set

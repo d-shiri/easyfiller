@@ -287,13 +287,16 @@ def synthesize(voice, rate, pitch, text, timeout=60, volume="+0%"):
                 if len(msg) < 2:
                     continue
                 header_length = int.from_bytes(msg[:2], "big")
-                if header_length > len(msg):
+                # The 2-byte prefix holds the length of the header *text* only, so
+                # the headers span msg[2 : header_length + 2] and the audio bytes
+                # begin at header_length + 2 -- exactly edge-tts'
+                # get_headers_and_data. (Using header_length as the audio offset
+                # instead prepends a stray "\r\n" to every chunk, corrupting an
+                # MP3 frame boundary ~every 140 ms -> choppy playback.)
+                if header_length + 2 > len(msg):
                     raise EdgeTTSError("Malformed audio frame from TTS service.")
-                if _parse_path(msg[2:header_length]) == b"audio":
-                    # header_length is the offset at which the audio bytes start
-                    # (it counts the 2-byte prefix), so the audio is everything
-                    # from there on -- matching edge-tts' get_headers_and_data.
-                    audio += msg[header_length:]
+                if _parse_path(msg[2:header_length + 2]) == b"audio":
+                    audio += msg[header_length + 2:]
     finally:
         ws.close()
 

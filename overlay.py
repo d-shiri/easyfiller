@@ -11,7 +11,6 @@ error (red). Callers build the list with start() and advance it with set_step().
 """
 
 import json
-import random
 
 from aqt import mw
 
@@ -252,7 +251,10 @@ def _ensure(editor):
         return None
     _suppress_anki_progress()
     if not _shown:
-        web.eval(_SHOW_JS % json.dumps(_BASE_CSS + random.choice(loaders.LOADERS)))
+        from . import get_config
+
+        name = get_config().get("loader", loaders.DEFAULT)
+        web.eval(_SHOW_JS % json.dumps(_BASE_CSS + loaders.get_css(name)))
         _shown = True
     return web
 
