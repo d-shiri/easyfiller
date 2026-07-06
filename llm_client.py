@@ -45,9 +45,42 @@ PROMPT_TEMPLATE = (
     'If the input "{word}" is an inflected or plural form different from canonical, '
     'write at least one example sentence that uses "{word}" exactly as given; the '
     "remaining example(s) may use the canonical form. "
-    "Write two natural example sentences at A2-B1 level that actually use the word. "
+    "Write two natural example sentences that actually use the word. {level} "
     "Keep the English meaning short (a few words)."
 )
+
+# CEFR difficulty presets for the example sentences. An empty "cefr_level" config
+# keeps the built-in default (roughly A2-B1); each value below completes the
+# template's "...that actually use the word. <X> Keep the English meaning short."
+_CEFR_LEVELS = {
+    "A1": "Write them at CEFR level A1: only the most common everyday words in "
+          "short, simple present-tense sentences.",
+    "A2": "Write them at CEFR level A2: simple everyday vocabulary and short "
+          "sentences (present and perfect tense, basic connectors).",
+    "B1": "Write them at CEFR level B1: common everyday vocabulary with some "
+          "subordinate clauses; clear and not too long.",
+    "B2": "Write them at CEFR level B2: varied vocabulary and more complex "
+          "sentence structures, including some abstract topics.",
+    "C1": "Write them at CEFR level C1: sophisticated, idiomatic language with "
+          "complex structures and precise, less common vocabulary.",
+    "C2": "Write them at CEFR level C2: near-native, nuanced and idiomatic, with "
+          "advanced vocabulary and sophisticated structures.",
+}
+_DEFAULT_CEFR = "Aim for roughly A2-B1 (CEFR) difficulty."
+
+
+def cefr_instruction(config):
+    """Sentence telling the model what CEFR difficulty to write examples at.
+
+    Empty/blank "cefr_level" -> the built-in default (~A2-B1). A known level
+    (A1-C2, case-insensitive) gets a rich descriptor; any other non-empty value
+    is passed through generically so an unusual setting still steers the model
+    instead of being silently ignored.
+    """
+    level = (config.get("cefr_level") or "").strip().upper()
+    if not level:
+        return _DEFAULT_CEFR
+    return _CEFR_LEVELS.get(level, "Write them at CEFR level %s." % level)
 
 class ModelError(RuntimeError):
     """A provider error worth presenting with extra structure.
@@ -369,7 +402,14 @@ def generate(word, config, avoid=None, instruction=None, current=None):
     # for the same JSON shape; use .replace so its literal braces don't break.
     # llm_prompt is the provider-neutral key; fall back to the old claude_prompt.
     custom = config.get("llm_prompt") or config.get("claude_prompt")
-    prompt = custom.replace("{word}", word) if custom else PROMPT_TEMPLATE.format(word=word)
+    if custom:
+        prompt = custom.replace("{word}", word)
+        # A custom template has no {level} slot, so only steer difficulty when the
+        # user explicitly set a level -- otherwise leave their prompt untouched.
+        if (config.get("cefr_level") or "").strip():
+            prompt += "\n" + cefr_instruction(config)
+    else:
+        prompt = PROMPT_TEMPLATE.format(word=word, level=cefr_instruction(config))
     # Targeted only when there's at least one real sentence to anchor a positional
     # instruction to; an all-blank `current` falls through to the normal path.
     targeted = bool(

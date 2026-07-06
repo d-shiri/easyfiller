@@ -30,6 +30,11 @@ Two one-press helpers for the card editor:
   (`studiert` → `studieren`), and at least one example still uses the form you typed.
   Set `false` to leave the field exactly as entered. Note: a custom `llm_prompt`
   must include the `canonical` field for this to take effect.
+- `cefr_level` – difficulty of the generated example sentences, as a CEFR level:
+  `"A1"`, `"A2"`, `"B1"`, `"B2"`, `"C1"`, or `"C2"` (case-insensitive). Empty (the
+  default) keeps the built-in ~A2-B1 level. A2 gives short everyday sentences for
+  beginners; B2/C1 give longer, more varied, more idiomatic ones. With a custom
+  `llm_prompt`, this is appended only when you set a non-empty level.
 - `provider` – which local LLM CLI to use: `"claude"` (default) or `"ollama"`. Each
   provider reads its own `*_path` / `*_model` keys below.
 - `claude_path` – path to the `claude` CLI. Leave as `"claude"` to auto-resolve, or set
