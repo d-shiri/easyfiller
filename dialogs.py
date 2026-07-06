@@ -14,6 +14,7 @@ import os
 from aqt.qt import (
     QApplication,
     QColor,
+    QComboBox,
     QDialog,
     QFrame,
     QGraphicsDropShadowEffect,
@@ -410,12 +411,17 @@ def confirm_duplicate(parent, word, decks, count=1):
     return result["choice"]
 
 
-def ask_instruction(parent, dictate=None, lang=None, on_lang=None):
+def ask_instruction(parent, dictate=None, level=None, lang=None, on_lang=None):
     """Prompt for optional free-text guidance before regenerating examples.
 
-    Returns the typed text (possibly an empty string when the user just hits
-    Regenerate without typing) or None if the dialog was cancelled. Ctrl+Enter
-    submits without leaving the text box. Same styled card as the other dialogs.
+    Returns `(text, level)` on Regenerate -- `text` is the typed instruction
+    (possibly an empty string) and `level` is the chosen CEFR override ("A1".."C2",
+    or None to use the configured default) -- or None if the dialog was cancelled.
+    Ctrl+Enter submits without leaving the text box. Same styled card as the other
+    dialogs.
+
+    `level` (in) is the currently configured CEFR level, used to preselect the
+    difficulty dropdown so the dialog reflects the existing default.
 
     `dictate`, when given, adds a "Speak" button that lets the user dictate the
     instruction by voice. It is a callback `dictate(parent, set_state, insert)`:
@@ -460,10 +466,36 @@ def ask_instruction(parent, dictate=None, lang=None, on_lang=None):
     box.setFixedHeight(92)
     lay.addWidget(box)
 
-    result = {"text": None}
+    # Difficulty picker: overrides the configured CEFR level for this run only.
+    # "Default" (empty data) keeps whatever the config says.
+    lvl_row = QHBoxLayout()
+    lvl_row.setSpacing(10)
+    lvl_label = QLabel("Difficulty")
+    lvl_label.setObjectName("gaIntro")
+    level_box = QComboBox()
+    level_box.setObjectName("gaSelect")
+    level_box.setCursor(Qt.CursorShape.PointingHandCursor)
+    # The Default entry spells out what it resolves to: the configured level, or
+    # our built-in A2-B1 when the config leaves it empty. It stays preselected
+    # (index 0) so "Default (B2)" is what the user sees unless they override.
+    want = (level or "").strip().upper()
+    _levels = [
+        ("Default (%s)" % (want or "A2-B1"), ""),
+        ("A1 · easiest", "A1"), ("A2", "A2"), ("B1", "B1"),
+        ("B2", "B2"), ("C1", "C1"), ("C2 · hardest", "C2"),
+    ]
+    for lbl, code in _levels:
+        level_box.addItem(lbl, code)
+    lvl_row.addWidget(lvl_label, 0, Qt.AlignmentFlag.AlignVCenter)
+    lvl_row.addWidget(level_box)
+    lvl_row.addStretch(1)
+    lay.addLayout(lvl_row)
+
+    result = {"text": None, "level": None}
 
     def submit():
         result["text"] = box.toPlainText().strip()
+        result["level"] = level_box.currentData() or None
         dlg.accept()
 
     # Ctrl+Enter (and the keypad variant) submits from inside the text box, where
@@ -587,7 +619,9 @@ def ask_instruction(parent, dictate=None, lang=None, on_lang=None):
     _center(dlg, parent)
     box.setFocus()
     dlg.exec()
-    return result["text"]
+    if result["text"] is None:
+        return None
+    return result["text"], result["level"]
 
 
 def show_error(parent, message, title="Something went wrong", hint=None, models=None,
@@ -836,6 +870,18 @@ _STYLE = """
   font-family:-apple-system,'Segoe UI',Roboto,sans-serif;
 }
 #gaInput:focus{ border-color:%(accent)s; }
+#gaSelect{
+  background:%(pill_bg)s; color:%(text)s;
+  border:2px solid transparent; border-radius:9px; padding:6px 12px; font-size:13px;
+  font-family:-apple-system,'Segoe UI',Roboto,sans-serif;
+}
+#gaSelect:focus{ border-color:%(accent)s; }
+#gaSelect::drop-down{ border:none; width:20px; }
+#gaSelect QAbstractItemView{
+  background:%(card)s; color:%(text)s;
+  selection-background-color:%(accent)s; selection-color:#ffffff;
+  border:none; border-radius:8px; outline:none; padding:4px;
+}
 #gaCopyPill{
   background:%(pill_bg)s; color:%(pill_text)s; text-align:left;
   border:none; border-radius:9px; padding:5px 12px; font-size:13px; font-weight:600;

@@ -34,7 +34,9 @@ Two one-press helpers for the card editor:
   `"A1"`, `"A2"`, `"B1"`, `"B2"`, `"C1"`, or `"C2"` (case-insensitive). Empty (the
   default) keeps the built-in ~A2-B1 level. A2 gives short everyday sentences for
   beginners; B2/C1 give longer, more varied, more idiomatic ones. With a custom
-  `llm_prompt`, this is appended only when you set a non-empty level.
+  `llm_prompt`, this is appended only when you set a non-empty level. The
+  Regenerate dialog also has a difficulty dropdown that overrides this for a
+  single run (it starts on the level set here).
 - `provider` – which local LLM CLI to use: `"claude"` (default) or `"ollama"`. Each
   provider reads its own `*_path` / `*_model` keys below.
 - `claude_path` – path to the `claude` CLI. Leave as `"claude"` to auto-resolve, or set

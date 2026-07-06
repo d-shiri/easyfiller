@@ -165,7 +165,7 @@ def _download_model(editor, model, on_ready):
     mw.taskman.run_in_background(work, on_done)
 
 
-def _generate_async(editor, then=None, regenerate=False, instruction=None):
+def _generate_async(editor, then=None, regenerate=False, instruction=None, level=None):
     """Generate (or regenerate) meaning + examples for the note's word.
 
     In the default (fill) mode only empty fields are written. In `regenerate`
@@ -173,7 +173,8 @@ def _generate_async(editor, then=None, regenerate=False, instruction=None):
     (meaning and the normalized word are left untouched), and `instruction` --
     optional free text from the user -- steers the new examples. The current
     sentences are passed to the model as things to avoid, so a blank instruction
-    still yields different examples.
+    still yields different examples. `level` is an optional per-run CEFR override
+    ("A1".."C2", or None to use the configured `cefr_level`).
     """
     config = get_config()
     note = editor.note
@@ -293,7 +294,7 @@ def _generate_async(editor, then=None, regenerate=False, instruction=None):
             # things to avoid repeating.
             result["data"] = llm_client.generate(
                 word, config, avoid=avoid, instruction=instruction,
-                current=current if regenerate else None,
+                current=current if regenerate else None, level=level,
             )
             on_main(lambda: overlay.set_step(editor, "gen", state="done"))
 
@@ -555,9 +556,13 @@ def on_regenerate(editor):
         #     cfg = get_config()
         #     cfg["whisper_language"] = code
         #     mw.addonManager.writeConfig(__name__, cfg)
-        instruction = dialogs.ask_instruction(editor.parentWindow, dictate=_dictate)
-        if instruction is None:
+        answer = dialogs.ask_instruction(
+            editor.parentWindow, dictate=_dictate,
+            level=config.get("cefr_level", ""),
+        )
+        if answer is None:
             return
+        instruction, level = answer
         # Regenerate overwrites the German example fields wholesale, dropping any
         # old [sound:...] tag with them, so the audio left on the card no longer
         # matches the new sentence. Chain pronunciation (same as the "both" flow)
@@ -566,6 +571,7 @@ def on_regenerate(editor):
             editor,
             regenerate=True,
             instruction=instruction,
+            level=level,
             then=lambda: tts_module.pronounce(editor, get_config()),
         )
 

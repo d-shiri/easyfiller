@@ -69,18 +69,23 @@ _CEFR_LEVELS = {
 _DEFAULT_CEFR = "Aim for roughly A2-B1 (CEFR) difficulty."
 
 
-def cefr_instruction(config):
+def cefr_phrase(level):
     """Sentence telling the model what CEFR difficulty to write examples at.
 
-    Empty/blank "cefr_level" -> the built-in default (~A2-B1). A known level
-    (A1-C2, case-insensitive) gets a rich descriptor; any other non-empty value
-    is passed through generically so an unusual setting still steers the model
-    instead of being silently ignored.
+    Empty/blank `level` -> the built-in default (~A2-B1). A known level (A1-C2,
+    case-insensitive) gets a rich descriptor; any other non-empty value is passed
+    through generically so an unusual setting still steers the model instead of
+    being silently ignored.
     """
-    level = (config.get("cefr_level") or "").strip().upper()
+    level = (level or "").strip().upper()
     if not level:
         return _DEFAULT_CEFR
     return _CEFR_LEVELS.get(level, "Write them at CEFR level %s." % level)
+
+
+def cefr_instruction(config):
+    """CEFR difficulty sentence for the configured `cefr_level`."""
+    return cefr_phrase(config.get("cefr_level"))
 
 class ModelError(RuntimeError):
     """A provider error worth presenting with extra structure.
@@ -380,7 +385,7 @@ def translate(sentences, config):
     return [str(x) for x in data]
 
 
-def generate(word, config, avoid=None, instruction=None, current=None):
+def generate(word, config, avoid=None, instruction=None, current=None, level=None):
     """Return {"meaning": str, "examples": [{"de","en"}, {"de","en"}]}.
 
     The built-in prompt also returns "canonical" (the dictionary citation form);
@@ -401,15 +406,18 @@ def generate(word, config, avoid=None, instruction=None, current=None):
     # A custom prompt (advanced) must keep the "{word}" placeholder and still ask
     # for the same JSON shape; use .replace so its literal braces don't break.
     # llm_prompt is the provider-neutral key; fall back to the old claude_prompt.
+    # `level` (a per-run CEFR override, e.g. from the Regenerate dialog) wins over
+    # the configured "cefr_level"; None means "use the config".
+    effective_level = level if level is not None else config.get("cefr_level")
     custom = config.get("llm_prompt") or config.get("claude_prompt")
     if custom:
         prompt = custom.replace("{word}", word)
-        # A custom template has no {level} slot, so only steer difficulty when the
-        # user explicitly set a level -- otherwise leave their prompt untouched.
-        if (config.get("cefr_level") or "").strip():
-            prompt += "\n" + cefr_instruction(config)
+        # A custom template has no {level} slot, so only steer difficulty when a
+        # level is actually set -- otherwise leave their prompt untouched.
+        if (effective_level or "").strip():
+            prompt += "\n" + cefr_phrase(effective_level)
     else:
-        prompt = PROMPT_TEMPLATE.format(word=word, level=cefr_instruction(config))
+        prompt = PROMPT_TEMPLATE.format(word=word, level=cefr_phrase(effective_level))
     # Targeted only when there's at least one real sentence to anchor a positional
     # instruction to; an all-blank `current` falls through to the normal path.
     targeted = bool(
