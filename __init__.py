@@ -74,6 +74,7 @@ def _clean_canonical(canonical, typed_word):
     typed = (typed_word or "").strip().lower()
     if not typed:
         return canonical
+    typed_cons = _consonant_skeleton(typed)
     for tok in canonical.lower().split():
         if tok in ("der", "die", "das"):
             continue  # ignore the article we may have added
@@ -86,7 +87,24 @@ def _clean_canonical(canonical, typed_word):
             shared += 1
         if shared >= 4:  # shared stem handles inflections (studiert -> studieren)
             return canonical
+        # Strong verbs change the stem VOWEL (wirbt -> werben, laeuft -> laufen,
+        # gab -> geben), so a shared letter prefix is too short. Ablaut leaves the
+        # consonants intact, so compare consonant skeletons -- a matching prefix of
+        # 2+ consonants still rejects grammar-note garbage ("noun", "verb").
+        tok_cons = _consonant_skeleton(tok)
+        cons_shared = 0
+        for a, b in zip(typed_cons, tok_cons):
+            if a != b:
+                break
+            cons_shared += 1
+        if cons_shared >= 2:
+            return canonical
     return ""
+
+
+def _consonant_skeleton(word):
+    """`word` with vowels removed, for matching across German stem-vowel changes."""
+    return "".join(c for c in word if c not in "aeiouäöü")
 
 
 def _lemma_dup_ok(editor, data, typed_word, precheck_nids, config):
