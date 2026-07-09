@@ -26,5 +26,6 @@
   "shortcut_regenerate": "Ctrl+Shift+R",
   "shortcut_pronounce": "Ctrl+Shift+P",
   "shortcut_both": "Ctrl+Shift+B",
-  "shortcut_clear": "Ctrl+Shift+X"
+  "shortcut_clear": "Ctrl+Shift+X",
+  "shortcut_lookup": "Ctrl+Shift+L"
 }

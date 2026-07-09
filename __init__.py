@@ -13,6 +13,7 @@ from aqt.utils import tooltip
 from . import llm_client
 from . import dialogs
 from . import diagnostics
+from . import lookup
 from . import overlay
 from . import recorder
 from . import stt
@@ -24,12 +25,14 @@ def get_config():
     return mw.addonManager.getConfig(__name__) or {}
 
 
-def _find_duplicates(word, note, config):
-    """Find notes (excluding this one) that already contain `word`.
+def _find_duplicates(word, config, exclude_nid=None):
+    """Find notes that already contain `word`.
 
     Exact match on the source field, plus a word-boundary fallback across all
     fields to catch the headword on note types that name the field differently.
     Backed by Anki's indexed search -- milliseconds even on large collections.
+    `exclude_nid` drops one note id from the results (the note being edited); the
+    lookup popup, which has no active note, leaves it None.
 
     Returns (note_ids, sorted_deck_names).
     """
@@ -38,7 +41,7 @@ def _find_duplicates(word, note, config):
     src = config.get("source_field", "Back")
     safe = word.replace('"', "")
     query = '("{f}:{w}" OR w:"{w}")'.format(f=src, w=safe)
-    nids = [nid for nid in mw.col.find_notes(query) if nid != note.id]
+    nids = [nid for nid in mw.col.find_notes(query) if nid != exclude_nid]
     decks = set()
     for nid in nids:
         for cid in mw.col.card_ids_of_note(nid):
@@ -99,7 +102,7 @@ def _lemma_dup_ok(editor, data, typed_word, precheck_nids, config):
     canonical = _clean_canonical((data or {}).get("canonical", ""), typed_word)
     if not canonical or canonical.lower() == (typed_word or "").lower():
         return True
-    nids, decks = _find_duplicates(canonical, editor.note, config)
+    nids, decks = _find_duplicates(canonical, config, exclude_nid=editor.note.id)
     if not any(n not in precheck_nids for n in nids):
         return True
     choice = dialogs.confirm_duplicate(
@@ -243,7 +246,7 @@ def _generate_async(editor, then=None, regenerate=False, instruction=None, level
     # user only wants different example sentences.
     precheck_nids = set()
     if not regenerate:
-        nids, dupes = _find_duplicates(word, note, config)
+        nids, dupes = _find_duplicates(word, config, exclude_nid=note.id)
         precheck_nids = set(nids)
         if nids:
             choice = dialogs.confirm_duplicate(
@@ -610,6 +613,91 @@ def on_both(editor):
 
 
 # --------------------------------------------------------------------------- #
+# Word lookup (mini dictionary)                                               #
+# --------------------------------------------------------------------------- #
+def _add_to_anki(word, data, audio_by_text):
+    """Open Anki's Add-note window pre-filled from a looked-up word.
+
+    Reuses whatever note type the Add window currently has and fills its fields
+    by the add-on's configured names (missing fields are simply skipped, exactly
+    like the editor flow). Previewed pronunciation clips are attached to their
+    tts fields and their temp files removed. The user reviews, picks the deck,
+    and saves in the Add window -- nothing is written to the collection here.
+    """
+    import aqt
+
+    config = get_config()
+    addcards = aqt.dialogs.open("AddCards", mw)
+    current = addcards.editor.note
+    notetype = current.note_type() if current else mw.col.models.current()
+    note = mw.col.new_note(notetype)
+
+    def fill(name, value):
+        idx = field_index(note, name)
+        if idx is not None and value:
+            note.fields[idx] = value
+
+    head = (data or {}).get("canonical") or word
+    fill(config.get("source_field", "Back"), head)
+    fill(config.get("meaning_field", "Front"), (data or {}).get("meaning", ""))
+    de_fields = config.get("example_fields", [])
+    en_fields = config.get("translation_fields", [])
+    for i, ex in enumerate((data or {}).get("examples", [])):
+        if i < len(de_fields):
+            fill(de_fields[i], (ex or {}).get("de", ""))
+        if i < len(en_fields):
+            fill(en_fields[i], (ex or {}).get("en", ""))
+
+    # Attach any audio previewed in the popup: the field's text is the same
+    # German string that was synthesized, so it keys straight into audio_by_text.
+    for fname in config.get("tts_fields", []):
+        idx = field_index(note, fname)
+        if idx is None:
+            continue
+        path = (audio_by_text or {}).get(strip_html(note.fields[idx]))
+        if not path or not os.path.exists(path):
+            continue
+        try:
+            try:
+                filename = mw.col.media.add_file(path)
+            except AttributeError:  # older API name
+                filename = mw.col.media.addFile(path)
+        finally:
+            if os.path.exists(path):
+                os.remove(path)
+        note.fields[idx] = (note.fields[idx] + " [sound:%s]" % filename).strip()
+
+    # Drop any previewed clips we didn't attach (e.g. field absent on this type).
+    for path in (audio_by_text or {}).values():
+        if path and os.path.exists(path):
+            os.remove(path)
+
+    addcards.set_note(note)
+
+
+def on_lookup(parent):
+    """Open the word-lookup popup, wiring it to the LLM / TTS / dup-check logic."""
+    config = get_config()
+
+    def search(word):
+        data = llm_client.generate(word, config)
+        if isinstance(data, dict):
+            canon = data.get("canonical", "") if config.get("normalize_word", True) else ""
+            data["canonical"] = _clean_canonical(canon, word)
+        return data
+
+    lookup.open_lookup_dialog(
+        parent,
+        search=search,
+        find_dupes=lambda word: _find_duplicates(word, config),
+        synthesize=lambda text: tts_module.synthesize_clip(text, config),
+        open_in_browser=_open_in_browser,
+        add_to_anki=_add_to_anki,
+        model_label=llm_client.active_model(config),
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Hooks                                                                        #
 # --------------------------------------------------------------------------- #
 _ICON_DIR = os.path.join(os.path.dirname(__file__), "assets", "icons")
@@ -676,6 +764,15 @@ def _add_buttons(buttons, editor):
             % config.get("shortcut_clear", "Ctrl+Shift+X"),
         )
     )
+    buttons.append(
+        editor.addButton(
+            _icon("lookup", "generate"),
+            "de_lookup",
+            lambda ed: on_lookup(ed.parentWindow),
+            tip="Look up a word before adding it — %s"
+            % config.get("shortcut_lookup", "Ctrl+Shift+L"),
+        )
+    )
     return buttons
 
 
@@ -695,6 +792,10 @@ def _add_shortcuts(shortcuts, editor):
     )
     shortcuts.append(
         (config.get("shortcut_clear", "Ctrl+Shift+X"), lambda: on_clear(editor), True)
+    )
+    shortcuts.append(
+        (config.get("shortcut_lookup", "Ctrl+Shift+L"),
+         lambda: on_lookup(editor.parentWindow), True)
     )
 
 
@@ -724,6 +825,10 @@ def _install_menu():
     if mw is None or not getattr(mw, "form", None):
         return
     from aqt.qt import QAction
+
+    lookup_action = QAction("EasyFiller: Look up a word…", mw)
+    lookup_action.triggered.connect(lambda: on_lookup(mw))
+    mw.form.menuTools.addAction(lookup_action)
 
     action = QAction("EasyFiller: Setup && Diagnostics…", mw)
     action.triggered.connect(lambda: diagnostics.open_diagnostics(mw))

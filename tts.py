@@ -166,6 +166,21 @@ def _synthesize_cli(exe, voice, rate, pitch, text, timeout):
     return path
 
 
+def synthesize_clip(text, config):
+    """Synthesize `text` to a temp mp3 and return its path (caller deletes it).
+
+    A note-free wrapper around `_synthesize` using the configured voice/rate/pitch,
+    with the same abbreviation expansion the field flow applies. Used by the
+    word-lookup popup to preview a word's pronunciation before it becomes a card.
+    """
+    exe = resolve_edge_tts_path(config.get("edge_tts_path", "edge-tts"))
+    voice = config.get("tts_voice") or DEFAULT_VOICE
+    rate = _rate_arg(config.get("tts_speed", 1.25))
+    pitch = _pitch_arg(config.get("tts_pitch", 0))
+    timeout = config.get("tts_timeout", 60)
+    return _synthesize(exe, voice, rate, pitch, expand_abbreviations(text), timeout)
+
+
 def pronounce(editor, config):
     exe = resolve_edge_tts_path(config.get("edge_tts_path", "edge-tts"))
     voice = config.get("tts_voice") or DEFAULT_VOICE

@@ -78,7 +78,12 @@ Two one-press helpers for the card editor:
   picker is disabled; set this here if you want it.
 - `stt_timeout` – seconds to wait for transcription (default 300). Generous
   because the very first run also downloads the model.
-- `shortcut_*` – keyboard shortcuts.
+- `shortcut_*` – keyboard shortcuts. `shortcut_lookup` (default `Ctrl+Shift+L`)
+  opens the **word-lookup popup**: a mini dictionary where you preview a word's
+  meaning, example sentences and pronunciation (and see if it's already in your
+  collection) before deciding to add it. "Add to Anki" opens Anki's Add-note
+  window pre-filled so you review and save. Also available from Tools →
+  "EasyFiller: Look up a word…" and a magnifier button on the editor toolbar.
 
 Pronunciation needs no install. You only need the LLM CLI for your chosen
 `provider`: either the **Claude** CLI signed in (`claude` working in a terminal)
