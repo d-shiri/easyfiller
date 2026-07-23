@@ -367,7 +367,7 @@ def _generate_async(editor, then=None, regenerate=False, instruction=None, level
                 _download_model(
                     editor,
                     chosen,
-                    lambda: _generate_async(editor, then, regenerate, instruction),
+                    lambda: _generate_async(editor, then, regenerate, instruction, level),
                 )
             return
         # The lemma re-check only matters in fill mode; regenerate never rewrites
@@ -430,6 +430,12 @@ def _apply_generated(editor, data, translations, config, regenerate=False):
                 continue
             if not regenerate and strip_html(note.fields[de_idx]):
                 continue  # fill mode: leave an already-filled German field alone
+            if regenerate and strip_html(note.fields[de_idx]) == strip_html(de):
+                # The model kept this sentence (e.g. a targeted edit told it to).
+                # Skip the write so the field keeps its [sound:...] tag and its
+                # existing translation, and the chained TTS doesn't re-synthesize
+                # a clip we already have.
+                continue
             note.fields[de_idx] = de
             changed = True
             if i < len(en_fields):
@@ -452,6 +458,10 @@ def _apply_generated(editor, data, translations, config, regenerate=False):
     if changed:
         editor.set_note(note)
         tooltip("Regenerated examples." if regenerate else "Filled empty fields from Claude.")
+    elif regenerate:
+        # An honest toast: the model copied every sentence back, so nothing was
+        # rewritten (and no audio was touched).
+        tooltip("No changes — the examples came back the same.")
     else:
         tooltip("Nothing to fill (fields already populated).")
 
@@ -459,7 +469,22 @@ def _apply_generated(editor, data, translations, config, regenerate=False):
 # --------------------------------------------------------------------------- #
 # Editor actions (save the note first so we read the latest text)             #
 # --------------------------------------------------------------------------- #
+def _busy():
+    """True while a run's overlay is up -- blocks re-entrant editor actions.
+
+    The overlay covers the webview, so the buttons can't fire twice, but the
+    Qt-level shortcuts still can; a second run would replace the overlay's
+    cancel token (orphaning the first run's Cancel) and race it writing fields.
+    """
+    if overlay.is_shown():
+        tooltip("Still working — wait for it to finish, or press Cancel.")
+        return True
+    return False
+
+
 def on_generate(editor):
+    if _busy():
+        return
     editor.call_after_note_saved(lambda: _generate_async(editor))
 
 
@@ -564,6 +589,9 @@ def on_regenerate(editor):
     means "different examples"), so we only abort on None (the dialog was
     dismissed).
     """
+    if _busy():
+        return
+
     def proceed():
         config = get_config()
         if _regenerate_blocked(editor, editor.note, config):
@@ -600,6 +628,8 @@ def on_regenerate(editor):
 
 
 def on_pronounce(editor):
+    if _busy():
+        return
     editor.call_after_note_saved(lambda: tts_module.pronounce(editor, get_config()))
 
 
@@ -609,6 +639,8 @@ def on_clear(editor):
     Anki's own undo (Ctrl+Z in the editor) reverses this, so we clear without a
     confirmation prompt to keep the button a single press.
     """
+    if _busy():  # clearing mid-run would race the run's own field writes
+        return
     note = editor.note
     if note is None:
         return
@@ -623,6 +655,8 @@ def on_clear(editor):
 
 
 def on_both(editor):
+    if _busy():
+        return
     editor.call_after_note_saved(
         lambda: _generate_async(
             editor, then=lambda: tts_module.pronounce(editor, get_config())

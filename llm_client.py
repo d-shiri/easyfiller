@@ -427,10 +427,13 @@ def generate(word, config, avoid=None, instruction=None, current=None, level=Non
     if targeted:
         # Give the model the current sentences as numbered, ordered content so a
         # positional instruction has something to anchor to, and require it to
-        # return EVERY position -- copying unchanged ones verbatim. The write-back
-        # is positional (examples[i] -> example_fields[i]), so a verbatim copy is
-        # what "leave that one alone" means, and one example per position keeps the
-        # two halves aligned.
+        # return EVERY position. The default is to REWRITE every sentence -- the
+        # button's promise is fresh examples -- and only an instruction that
+        # explicitly scopes the change ("only change the second sentence") gets
+        # untouched positions copied back verbatim. The write-back is positional
+        # (examples[i] -> example_fields[i]), so a verbatim copy is what "leave
+        # that one alone" means, and one example per position keeps the two
+        # halves aligned.
         numbered = "\n".join(
             "%d. %s" % (i, s.strip() or "(currently empty)")
             for i, s in enumerate(current, 1)
@@ -438,14 +441,18 @@ def generate(word, config, avoid=None, instruction=None, current=None, level=Non
         prompt += (
             "\nThe card currently has these example sentences, by position:\n"
             + numbered
-            + "\nApply this instruction from the user, taking it literally and "
-            "changing ONLY what it asks for:\n"
+            + "\nRewrite the examples following this instruction from the user:\n"
             + instruction.strip()
-            + "\nReturn exactly %d example objects, one per position above, in the "
-            "same order. For any position the instruction does not ask you to "
-            "change, copy that sentence back EXACTLY as it is now (same German, "
-            "same English translation). For a position marked (currently empty), "
-            "write a fresh natural example sentence." % len(current)
+            + "\nUnless the instruction says otherwise, replace EVERY position "
+            "with a fresh, clearly different sentence that follows the "
+            "instruction -- do not repeat or paraphrase the current sentences. "
+            "Only if the instruction explicitly limits the change to particular "
+            'positions (e.g. "only change the second sentence") or asks to keep '
+            "some, copy each kept position's German sentence back EXACTLY, "
+            "character for character. For a position marked (currently empty), "
+            "always write a fresh natural example sentence. Return exactly %d "
+            "example objects, one per position above, in the same order."
+            % len(current)
         )
     else:
         if avoid:

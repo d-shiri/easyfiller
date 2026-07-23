@@ -113,9 +113,20 @@ class _Spinner:
         self._timer.stop()
 
 
+# The one open popup (None when closed). Keeps the controller alive while the
+# non-modal dialog is up, and lets a second Ctrl+Shift+L re-focus the existing
+# popup instead of stacking another one.
+_open_ctrl = None
+
+
 def open_lookup_dialog(parent, *, search, find_dupes, synthesize, open_in_browser,
                        add_to_anki, model_label=""):
-    """Open the word-lookup popup (modal) on `parent`.
+    """Open the word-lookup popup (non-modal) on `parent`.
+
+    Non-modal because the duplicate banner opens Anki's Browser, which must stay
+    clickable (a modal here blocks input to every other Anki window, so the
+    Browser couldn't even be closed). If the popup is already open, it is
+    re-focused instead of opened twice.
 
     Callbacks (all supplied by __init__.py):
       search(word) -> data dict {"canonical","meaning","examples":[{"de","en"}]}
@@ -128,27 +139,30 @@ def open_lookup_dialog(parent, *, search, find_dupes, synthesize, open_in_browse
     path, so Add can reuse already-generated audio; add_to_anki owns those files
     afterwards (adds them to the media store and deletes the temp copies).
     """
-    ctrl = _LookupDialog(
+    global _open_ctrl
+    if _open_ctrl is not None:
+        try:
+            _open_ctrl.dlg.raise_()
+            _open_ctrl.dlg.activateWindow()
+            return
+        except RuntimeError:  # underlying Qt dialog already deleted
+            _open_ctrl = None
+    _open_ctrl = _LookupDialog(
         parent, search=search, find_dupes=find_dupes, synthesize=synthesize,
-        open_in_browser=open_in_browser, model_label=model_label,
+        open_in_browser=open_in_browser, add_to_anki=add_to_anki,
+        model_label=model_label,
     )
-    ctrl.dlg.exec()
-    # The modal loop has ended: with our dialog gone, Anki's Add window opens
-    # unobstructed. Perform the add here rather than inside the click handler.
-    if ctrl.pending_add is not None:
-        word, data, audio = ctrl.pending_add
-        add_to_anki(word, data, audio)
-        audio = None  # ownership handed to add_to_anki
-    ctrl.cleanup_audio()  # drop any previewed clips the add didn't claim
+    _open_ctrl.dlg.show()
 
 
 class _LookupDialog:
     def __init__(self, parent, *, search, find_dupes, synthesize, open_in_browser,
-                 model_label=""):
+                 add_to_anki, model_label=""):
         self._search = search
         self._find_dupes = find_dupes
         self._synthesize = synthesize
         self._open_in_browser = open_in_browser
+        self._add_to_anki = add_to_anki
         self._parent = parent
         self.pending_add = None
         self._closed = False
@@ -162,9 +176,15 @@ class _LookupDialog:
         self._c = c
         dlg, card, lay = dialogs._make_card(parent, c)
         self.dlg = dlg
+        # _make_card defaults to modal; undo that -- the duplicate banner opens
+        # Anki's Browser, which must stay usable while this popup is up.
+        dlg.setWindowModality(Qt.WindowModality.NonModal)
         lay.setSpacing(13)
         card.setFixedWidth(_CARD_W)
         dlg.finished.connect(lambda _: self._on_finished())
+        # If the parent window closes while we're open, the dialog is deleted
+        # without `finished` ever firing -- still reclaim the temp clips.
+        dlg.destroyed.connect(lambda _=None: self._on_destroyed())
 
         # Header: icon + (title over model subtitle), tight.
         head = QHBoxLayout()
@@ -202,11 +222,22 @@ class _LookupDialog:
         row.addWidget(self.lookup_btn, 0)
         lay.addLayout(row)
 
-        # Status line (spinner while working / short messages). Hidden at rest.
+        # Status row: spinner caption while working, plus a Cancel that aborts
+        # the in-flight lookup. Both hidden at rest.
+        srow = QHBoxLayout()
+        srow.setSpacing(10)
         self.status = QLabel("")
         self.status.setObjectName("gaStatus")
         self.status.hide()
-        lay.addWidget(self.status)
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setObjectName("gaBtn")
+        self.cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.cancel_btn.setAutoDefault(False)
+        self.cancel_btn.clicked.connect(self._cancel_lookup)
+        self.cancel_btn.hide()
+        srow.addWidget(self.status, 1)
+        srow.addWidget(self.cancel_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+        lay.addLayout(srow)
         self._spinner = _Spinner(self.status)
 
         # Duplicate banner (hidden until a duplicate is found).
@@ -300,10 +331,24 @@ class _LookupDialog:
 
         mw.taskman.run_in_background(work, done)
 
+    def _cancel_lookup(self):
+        """Abort the in-flight lookup.
+
+        The background thread can't be killed, but bumping the request id makes
+        its eventual result stale, so `done` drops it on arrival.
+        """
+        self._req += 1
+        # The duplicate banner appears as soon as the lookup starts; a canceled
+        # lookup should leave no trace of it either.
+        self._reset_results()
+        self._set_busy(False)
+        self.input.setFocus()
+
     def _set_busy(self, busy, caption=""):
         self.input.setEnabled(not busy)
         self.lookup_btn.setEnabled(not busy)
         self.lookup_btn.setText("Looking up…" if busy else "Look up")
+        self.cancel_btn.setVisible(busy)
         if busy:
             self.status.show()
             self._spinner.start(caption)
@@ -467,14 +512,34 @@ class _LookupDialog:
         if not self._data:
             return
         # Hand the previewed clips to add_to_anki (it takes ownership) and close;
-        # open_lookup_dialog performs the add once the modal loop exits.
+        # _on_finished performs the add once the dialog has closed.
         self.pending_add = (self._word, self._data, dict(self._audio))
         self._audio = {}  # ownership transferred; don't delete on cleanup
         self.dlg.accept()
 
     def _on_finished(self):
+        global _open_ctrl
         self._closed = True
         self._spinner.stop()
+        if _open_ctrl is self:
+            _open_ctrl = None
+        pending, self.pending_add = self.pending_add, None
+        if pending is not None:
+            word, data, audio = pending
+            # Defer one event-loop turn so the popup is fully gone before
+            # Anki's Add window opens on top of where it was.
+            QTimer.singleShot(0, lambda: self._add_to_anki(word, data, audio))
+        self.cleanup_audio()  # drop any previewed clips the add didn't claim
+        self.dlg.deleteLater()
+
+    def _on_destroyed(self):
+        # Runs after deleteLater too -- everything here must be idempotent and
+        # must not touch Qt objects (they are already gone).
+        global _open_ctrl
+        self._closed = True
+        if _open_ctrl is self:
+            _open_ctrl = None
+        self.cleanup_audio()
 
     # -- layout ------------------------------------------------------------- #
     def _grow(self):
